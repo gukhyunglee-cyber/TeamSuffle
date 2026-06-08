@@ -253,9 +253,50 @@ export default function App() {
     }
   };
 
+  const enableOfflineMode = () => {
+    localStorage.setItem('force_offline_mode', 'true');
+    setIsOfflineMode(true);
+    setCurrentUser({ uid: 'offline', email: 'offline@teamshuffle.local' });
+    setAppUser({
+      uid: 'offline-user',
+      email: 'offline@teamshuffle.local',
+      displayName: '오프라인 관리자',
+      photoUrl: '',
+      approved: true,
+      role: 'admin',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+    setIsAuthLoading(false);
+  };
+
   // Monitor auth state changes
   useEffect(() => {
+    if (localStorage.getItem('force_offline_mode') === 'true') {
+      setCurrentUser({ uid: 'offline', email: 'offline@teamshuffle.local' });
+      setAppUser({
+        uid: 'offline-user',
+        email: 'offline@teamshuffle.local',
+        displayName: '오프라인 관리자',
+        photoUrl: '',
+        approved: true,
+        role: 'admin',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      });
+      setIsAuthLoading(false);
+      return;
+    }
+
+    let unsubUserSnap: (() => void) | null = null;
+
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      // Clean up previous snapshots
+      if (unsubUserSnap) {
+        unsubUserSnap();
+        unsubUserSnap = null;
+      }
+
       if (firebaseUser) {
         setCurrentUser(firebaseUser);
         const userDocRef = doc(db, 'users', firebaseUser.uid);
@@ -282,22 +323,35 @@ export default function App() {
           } else {
             setAppUser(userSnap.data() as AppUser);
           }
-        } catch (err) {
+          setAuthError(null); // Clear previous errors if successful
+        } catch (err: any) {
           console.error('Error fetching/creating user profile:', err);
+          let errMsg = err?.message || String(err);
+          if (errMsg.includes('permission') || errMsg.includes('Permission') || errMsg.includes('PERMISSION_DENIED') || errMsg.includes('insufficient')) {
+            setAuthError('Firestore 연동 실패: 데이터베이스 권한 오류(Missing or insufficient permissions)가 발생했습니다. 개인 Firebase 프로젝트를 새로 연동하신 경우, [Firebase Console > Firestore Database] 메뉴에서 데이터베이스가 생성되었는지, 그리고 [Rules] 탭에 보안 규칙(firestore.rules 파일 내용)이 올바르게 배포되었는지 확인해야 합니다.');
+          } else {
+            setAuthError(`사용자 정보를 데이터베이스에서 불러오지 못했습니다: ${errMsg}`);
+          }
         }
 
-        const unsubUserSnap = onSnapshot(userDocRef, (docSnap) => {
-          if (docSnap.exists()) {
-            setAppUser(docSnap.data() as AppUser);
-          }
-        }, (err) => {
-          console.error('User snapshot error:', err);
-        });
+        // Set up snapshot observer to listen for real-time manager approval
+        try {
+          unsubUserSnap = onSnapshot(userDocRef, (docSnap) => {
+            if (docSnap.exists()) {
+              setAppUser(docSnap.data() as AppUser);
+            }
+          }, (err: any) => {
+            console.error('User snapshot error:', err);
+            let errMsg = err?.message || String(err);
+            if (errMsg.includes('permission') || errMsg.includes('Permission') || errMsg.includes('PERMISSION_DENIED') || errMsg.includes('insufficient')) {
+              setAuthError('Firestore 실시간 갱신 권한 오류가 발생했습니다. 개인 Firebase 설정의 [Rules]에 보안 규칙이 배포되어 있어야 합니다.');
+            }
+          });
+        } catch (snapshotErr) {
+          console.error('Failed to set up user snapshot observer:', snapshotErr);
+        }
 
         setIsAuthLoading(false);
-        return () => {
-          unsubUserSnap();
-        };
       } else {
         setCurrentUser(null);
         setAppUser(null);
@@ -305,8 +359,13 @@ export default function App() {
       }
     });
 
-    return () => unsubscribe();
-  }, []);
+    return () => {
+      unsubscribe();
+      if (unsubUserSnap) {
+        unsubUserSnap();
+      }
+    };
+  }, [isOfflineMode]);
 
   // Subscribe to all users if current user is an admin
   useEffect(() => {
@@ -1826,16 +1885,67 @@ export default function App() {
 
           {/* Error messages if any */}
           {authError && (
-            <div id="auth-error-alert" className="w-full bg-rose-50 border border-rose-100 rounded-2xl p-4 text-left flex gap-3">
-              <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5 animate-pulse" />
-              <div className="flex-1">
-                <span className="text-xs font-extrabold text-rose-900 leading-tight block">
-                  로그인 차단 알림
-                </span>
-                <span className="text-[11px] text-rose-700 mt-1 block leading-relaxed break-all font-semibold">
-                  {authError}
-                </span>
+            <div id="auth-error-alert" className="w-full bg-rose-50 border border-rose-100 rounded-2xl p-4 text-left flex flex-col gap-3">
+              <div className="flex gap-3">
+                <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5 animate-pulse" />
+                <div className="flex-1">
+                  <span className="text-xs font-extrabold text-rose-900 leading-tight block">
+                    데이터베이스 오류 발생
+                  </span>
+                  <span className="text-[11px] text-rose-700 mt-1 block leading-relaxed break-all font-semibold">
+                    {authError}
+                  </span>
+                </div>
               </div>
+
+              {/* Offer offline transition instantly if Firestore error */}
+              {(authError.includes('Firestore') || authError.includes('권한') || authError.includes('permission') || authError.includes('database') || authError.includes('사용자 정보를')) && (
+                <div className="flex flex-col gap-2 border-t border-rose-200/50 pt-2.5 mt-1">
+                  <button
+                    type="button"
+                    onClick={enableOfflineMode}
+                    className="w-full py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-[10px] font-extrabold transition-all hover:scale-[1.01] text-center cursor-pointer"
+                  >
+                    오프라인 캐시 전용 모드로 시작하기 (오류 우회/비로그인 기능)
+                  </button>
+                  
+                  <button
+                    type="button"
+                    onClick={() => {
+                      localStorage.removeItem('CUSTOM_FIREBASE_CONFIG');
+                      window.location.reload();
+                    }}
+                    className="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-750 border border-slate-200 rounded-xl text-[10px] font-extrabold transition-all text-center cursor-pointer"
+                  >
+                    커스텀 설정 초기화하고 기본 데모 DB로 시도
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* User profile is loading transition support state */}
+          {currentUser && !appUser && !authError && (
+            <div className="w-full bg-amber-50 border border-amber-150 rounded-2xl p-4 text-left flex flex-col gap-2.5">
+              <div className="flex items-start gap-2">
+                <RefreshCw className="w-4 h-4 text-amber-600 shrink-0 mt-0.5 animate-spin" />
+                <div className="flex-1">
+                  <span className="text-[11px] font-extrabold text-amber-950 leading-tight block">
+                    구글 로그인 성공. 프로필 로딩 중...
+                  </span>
+                  <span className="text-[10px] text-amber-800 mt-1 block leading-normal font-semibold">
+                    로그인은 완료되었으나, 개인 Firebase Database(Firestore)로부터 사용자의 회원 프로필 정보를 조회/작성하는 데 시간이 걸리고 있습니다. 
+                    계속 로딩이 멈춰 있다면 아래 버튼을 사용하여 오프라인 모드로 우선 실행할 수 있습니다.
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={enableOfflineMode}
+                className="w-full py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-[10px] font-extrabold transition-all hover:scale-[1.01] text-center cursor-pointer"
+              >
+                오프라인 강제 모드로 구동하기
+              </button>
             </div>
           )}
 

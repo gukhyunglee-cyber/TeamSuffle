@@ -1,7 +1,8 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, signOut, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
-import defaultFirebaseConfig from '../firebase-applet-config.json';
+import defaultFirebaseConfigJson from '../firebase-applet-config.json';
+const defaultFirebaseConfig = defaultFirebaseConfigJson as any;
 
 // Allow runtime credentials swapping via localStorage
 let firebaseConfig = { ...defaultFirebaseConfig };
