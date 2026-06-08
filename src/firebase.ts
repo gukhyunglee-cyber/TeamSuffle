@@ -4,16 +4,66 @@ import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
 import defaultFirebaseConfigJson from '../firebase-applet-config.json';
 const defaultFirebaseConfig = defaultFirebaseConfigJson as any;
 
-// Allow runtime credentials swapping via localStorage
+// Global memory store fallback for partitioned iframe environments
+const memoryStore: Record<string, string> = {};
+
+export const safeStorage = {
+  getItem: (key: string): string | null => {
+    try {
+      if (typeof window !== 'undefined') {
+        return localStorage.getItem(key);
+      }
+    } catch (e) {
+      console.warn(`localStorage.getItem('${key}') blocked, using memory:`, e);
+    }
+    return memoryStore[key] || null;
+  },
+  setItem: (key: string, value: string): void => {
+    try {
+      if (typeof window !== 'undefined') {
+        localStorage.setItem(key, value);
+        return;
+      }
+    } catch (e) {
+      console.warn(`localStorage.setItem('${key}') blocked, using memory:`, e);
+    }
+    memoryStore[key] = value;
+  },
+  removeItem: (key: string): void => {
+    try {
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem(key);
+        return;
+      }
+    } catch (e) {
+      console.warn(`localStorage.removeItem('${key}') blocked, using memory:`, e);
+    }
+    delete memoryStore[key];
+  }
+};
+
+// Allow runtime credentials swapping via safeStorage
 let firebaseConfig = { ...defaultFirebaseConfig };
 let isCustomConfigUsed = false;
 
 try {
-  if (typeof window !== 'undefined') {
-    const storedConfig = localStorage.getItem('CUSTOM_FIREBASE_CONFIG');
-    if (storedConfig) {
-      const parsed = JSON.parse(storedConfig);
-      if (parsed && parsed.apiKey && parsed.projectId) {
+  const storedConfig = safeStorage.getItem('CUSTOM_FIREBASE_CONFIG');
+  if (storedConfig) {
+    const parsed = JSON.parse(storedConfig);
+    if (parsed && parsed.apiKey && parsed.projectId) {
+      // Robust verification: check for placeholder dots or cut-off patterns
+      const hasPlaceholders = Object.values(parsed).some(
+        val => typeof val === 'string' && (val.includes('...') || val === '...' || val.trim() === '')
+      );
+      const isApiKeyTooShort = typeof parsed.apiKey === 'string' && parsed.apiKey.trim().length < 15;
+      const isPlaceholderProject = typeof parsed.projectId === 'string' && parsed.projectId.toLowerCase().includes('your');
+
+      if (hasPlaceholders || isApiKeyTooShort || isPlaceholderProject) {
+        console.warn('Dummy or placeholder CUSTOM_FIREBASE_CONFIG detected. Discarding to avoid initialization freeze.', parsed);
+        try {
+          safeStorage.removeItem('CUSTOM_FIREBASE_CONFIG');
+        } catch (_) {}
+      } else {
         // Drop the default specific firestoreDatabaseId when they provide a custom project,
         // so it falls back to the (default) database unless they explicitly specify one.
         const { firestoreDatabaseId, ...restDefault } = defaultFirebaseConfig;
@@ -23,7 +73,7 @@ try {
     }
   }
 } catch (err) {
-  console.error('Failed to parse custom Firebase config from localStorage:', err);
+  console.error('Failed to parse custom Firebase config:', err);
 }
 
 let app;
@@ -68,12 +118,14 @@ export function getLoadedFirebaseConfig() {
 }
 
 export function saveCustomFirebaseConfig(config: any) {
-  if (typeof window !== 'undefined') {
+  try {
     if (config) {
-      localStorage.setItem('CUSTOM_FIREBASE_CONFIG', JSON.stringify(config));
+      safeStorage.setItem('CUSTOM_FIREBASE_CONFIG', JSON.stringify(config));
     } else {
-      localStorage.removeItem('CUSTOM_FIREBASE_CONFIG');
+      safeStorage.removeItem('CUSTOM_FIREBASE_CONFIG');
     }
+  } catch (e) {
+    console.warn('safeStorage custom config write failed:', e);
   }
 }
 
@@ -90,7 +142,39 @@ export async function loginWithGoogleRedirect() {
 }
 
 export async function logout() {
-  await signOut(auth);
+  try {
+    await signOut(auth);
+  } catch (err) {
+    console.error('Firebase signOut failed, performing hard local session cleanup:', err);
+  } finally {
+    // Perform thorough local browser caching purge
+    if (typeof window !== 'undefined') {
+      try {
+        // Clear localStorage keys with 'firebase' or 'g_state'
+        for (let i = localStorage.length - 1; i >= 0; i--) {
+          const key = localStorage.key(i);
+          if (key && (key.toLowerCase().includes('firebase') || key.toLowerCase().includes('g_state'))) {
+            localStorage.removeItem(key);
+          }
+        }
+        // Clear sessionStorage keys with 'firebase' or 'g_state'
+        for (let i = sessionStorage.length - 1; i >= 0; i--) {
+          const key = sessionStorage.key(i);
+          if (key && (key.toLowerCase().includes('firebase') || key.toLowerCase().includes('g_state'))) {
+            sessionStorage.removeItem(key);
+          }
+        }
+        // Purge default Firebase IndexedDB databases to reset authentication states
+        if (window.indexedDB && window.indexedDB.deleteDatabase) {
+          window.indexedDB.deleteDatabase('firebaseLocalStorageDb');
+          // Purge firestore offline cache DB too if present
+          window.indexedDB.deleteDatabase('firestore/[DEFAULT]/team-shuffle-2f2f9/main');
+        }
+      } catch (cacheErr) {
+        console.warn('Failed to completely clean secondary auth storage:', cacheErr);
+      }
+    }
+  }
 }
 
 // Keep a placeholder for compatibility

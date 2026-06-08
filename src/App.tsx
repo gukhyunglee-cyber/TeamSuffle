@@ -51,7 +51,7 @@ import {
   writeBatch
 } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
-import { db, auth, loginWithGoogle, loginWithGoogleRedirect, logout, authenticateApp, testConnection, handleFirestoreError, OperationType, getLoadedFirebaseConfig, saveCustomFirebaseConfig } from './firebase';
+import { db, auth, loginWithGoogle, loginWithGoogleRedirect, logout, authenticateApp, testConnection, handleFirestoreError, OperationType, getLoadedFirebaseConfig, saveCustomFirebaseConfig, safeStorage } from './firebase';
 
 function shuffleArray<T>(array: T[]): T[] {
   const arr = [...array];
@@ -91,14 +91,12 @@ export default function App() {
   const [configStatus, setConfigStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [showConfigConfirmReset, setShowConfigConfirmReset] = useState<boolean>(false);
   const [customConfigInput, setCustomConfigInput] = useState<string>(() => {
-    if (typeof window !== 'undefined') {
-      const stored = localStorage.getItem('CUSTOM_FIREBASE_CONFIG');
-      if (stored) {
-        try {
-          return JSON.stringify(JSON.parse(stored), null, 2);
-        } catch {
-          return stored;
-        }
+    const stored = safeStorage.getItem('CUSTOM_FIREBASE_CONFIG');
+    if (stored) {
+      try {
+        return JSON.stringify(JSON.parse(stored), null, 2);
+      } catch {
+        return stored;
       }
     }
     return '';
@@ -107,7 +105,7 @@ export default function App() {
 
   // Departments State
   const [departments, setDepartments] = useState<Department[]>(() => {
-    const saved = localStorage.getItem('dept_departments');
+    const saved = safeStorage.getItem('dept_departments');
     if (saved) {
       try { return JSON.parse(saved); } catch (e) { return []; }
     }
@@ -116,12 +114,12 @@ export default function App() {
   
   // Selected department ID
   const [selectedDeptId, setSelectedDeptId] = useState<string | null>(() => {
-    return localStorage.getItem('selected_dept_id') || null;
+    return safeStorage.getItem('selected_dept_id') || null;
   });
 
   // Members State
   const [members, setMembers] = useState<Member[]>(() => {
-    const saved = localStorage.getItem('dept_members');
+    const saved = safeStorage.getItem('dept_members');
     if (saved) {
       try { return JSON.parse(saved); } catch (e) { return []; }
     }
@@ -133,10 +131,10 @@ export default function App() {
 
   // Offline or online states
   const [isOfflineMode, setIsOfflineMode] = useState<boolean>(() => {
-    return localStorage.getItem('force_offline_mode') === 'true';
+    return safeStorage.getItem('force_offline_mode') === 'true';
   });
   const [isDbLoading, setIsDbLoading] = useState<boolean>(() => {
-    return localStorage.getItem('force_offline_mode') !== 'true';
+    return safeStorage.getItem('force_offline_mode') !== 'true';
   });
 
   // Navigation active steps: 1 = Member setup / 2 = Shuffling & Results / 3 = Users Management (Admin)
@@ -254,7 +252,7 @@ export default function App() {
   };
 
   const enableOfflineMode = () => {
-    localStorage.setItem('force_offline_mode', 'true');
+    safeStorage.setItem('force_offline_mode', 'true');
     setIsOfflineMode(true);
     setCurrentUser({ uid: 'offline', email: 'offline@teamshuffle.local' });
     setAppUser({
@@ -272,7 +270,7 @@ export default function App() {
 
   // Monitor auth state changes
   useEffect(() => {
-    if (localStorage.getItem('force_offline_mode') === 'true') {
+    if (safeStorage.getItem('force_offline_mode') === 'true') {
       setCurrentUser({ uid: 'offline', email: 'offline@teamshuffle.local' });
       setAppUser({
         uid: 'offline-user',
@@ -289,78 +287,97 @@ export default function App() {
     }
 
     let unsubUserSnap: (() => void) | null = null;
+    let unsubscribe: (() => void) | null = null;
 
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      // Clean up previous snapshots
-      if (unsubUserSnap) {
-        unsubUserSnap();
-        unsubUserSnap = null;
-      }
+    // Safety timeout to prevent getting stuck on loading screen if Firebase Auth hangs
+    const authTimeout = setTimeout(() => {
+      console.warn('Firebase connection / initialization is taking longer than usual.');
+      setIsAuthLoading(false);
+    }, 4000);
 
-      if (firebaseUser) {
-        setCurrentUser(firebaseUser);
-        const userDocRef = doc(db, 'users', firebaseUser.uid);
-        
-        try {
-          const userSnap = await getDoc(userDocRef);
-          if (!userSnap.exists()) {
-            const now = new Date().toISOString();
-            const emailLower = (firebaseUser.email || '').toLowerCase();
-            const isSuperAdminEmail = emailLower === 'gukhyunglee@gmail.com';
-            
-            const initialUserRecord: AppUser = {
-              uid: firebaseUser.uid,
-              email: firebaseUser.email || '',
-              displayName: firebaseUser.displayName || '사용자',
-              photoUrl: firebaseUser.photoURL || '',
-              approved: isSuperAdminEmail,
-              role: isSuperAdminEmail ? 'admin' : 'user',
-              createdAt: now,
-              updatedAt: now
-            };
-            await setDoc(userDocRef, initialUserRecord);
-            setAppUser(initialUserRecord);
-          } else {
-            setAppUser(userSnap.data() as AppUser);
-          }
-          setAuthError(null); // Clear previous errors if successful
-        } catch (err: any) {
-          console.error('Error fetching/creating user profile:', err);
-          let errMsg = err?.message || String(err);
-          if (errMsg.includes('permission') || errMsg.includes('Permission') || errMsg.includes('PERMISSION_DENIED') || errMsg.includes('insufficient')) {
-            setAuthError('Firestore 연동 실패: 데이터베이스 권한 오류(Missing or insufficient permissions)가 발생했습니다. 개인 Firebase 프로젝트를 새로 연동하신 경우, [Firebase Console > Firestore Database] 메뉴에서 데이터베이스가 생성되었는지, 그리고 [Rules] 탭에 보안 규칙(firestore.rules 파일 내용)이 올바르게 배포되었는지 확인해야 합니다.');
-          } else {
-            setAuthError(`사용자 정보를 데이터베이스에서 불러오지 못했습니다: ${errMsg}`);
-          }
+    try {
+      unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+        clearTimeout(authTimeout);
+        // Clean up previous snapshots
+        if (unsubUserSnap) {
+          unsubUserSnap();
+          unsubUserSnap = null;
         }
 
-        // Set up snapshot observer to listen for real-time manager approval
-        try {
-          unsubUserSnap = onSnapshot(userDocRef, (docSnap) => {
-            if (docSnap.exists()) {
-              setAppUser(docSnap.data() as AppUser);
+        if (firebaseUser) {
+          setCurrentUser(firebaseUser);
+          
+          try {
+            const userDocRef = doc(db, 'users', firebaseUser.uid);
+            const userSnap = await getDoc(userDocRef);
+            if (!userSnap.exists()) {
+              const now = new Date().toISOString();
+              const emailLower = (firebaseUser.email || '').toLowerCase();
+              const isSuperAdminEmail = emailLower === 'gukhyunglee@gmail.com';
+              
+              const initialUserRecord: AppUser = {
+                uid: firebaseUser.uid,
+                email: firebaseUser.email || '',
+                displayName: firebaseUser.displayName || '사용자',
+                photoUrl: firebaseUser.photoURL || '',
+                approved: isSuperAdminEmail,
+                role: isSuperAdminEmail ? 'admin' : 'user',
+                createdAt: now,
+                updatedAt: now
+              };
+              await setDoc(userDocRef, initialUserRecord);
+              setAppUser(initialUserRecord);
+            } else {
+              setAppUser(userSnap.data() as AppUser);
             }
-          }, (err: any) => {
-            console.error('User snapshot error:', err);
+            setAuthError(null); // Clear previous errors if successful
+          } catch (err: any) {
+            console.error('Error fetching/creating user profile:', err);
             let errMsg = err?.message || String(err);
             if (errMsg.includes('permission') || errMsg.includes('Permission') || errMsg.includes('PERMISSION_DENIED') || errMsg.includes('insufficient')) {
-              setAuthError('Firestore 실시간 갱신 권한 오류가 발생했습니다. 개인 Firebase 설정의 [Rules]에 보안 규칙이 배포되어 있어야 합니다.');
+              setAuthError('Firestore 연동 실패: 데이터베이스 권한 오류(Missing or insufficient permissions)가 발생했습니다. 개인 Firebase 프로젝트를 새로 연동하신 경우, [Firebase Console > Firestore Database] 메뉴에서 데이터베이스가 생성되었는지, 그리고 [Rules] 탭에 보안 규칙(firestore.rules 파일 내용)이 올바르게 배포되었는지 확인해야 합니다.');
+            } else {
+              setAuthError(`사용자 정보를 데이터베이스에서 불러오지 못했습니다: ${errMsg}`);
             }
-          });
-        } catch (snapshotErr) {
-          console.error('Failed to set up user snapshot observer:', snapshotErr);
-        }
+          }
 
-        setIsAuthLoading(false);
-      } else {
-        setCurrentUser(null);
-        setAppUser(null);
-        setIsAuthLoading(false);
-      }
-    });
+          // Set up snapshot observer to listen for real-time manager approval
+          try {
+            const userDocRef = doc(db, 'users', firebaseUser.uid);
+            unsubUserSnap = onSnapshot(userDocRef, (docSnap) => {
+              if (docSnap.exists()) {
+                setAppUser(docSnap.data() as AppUser);
+              }
+            }, (err: any) => {
+              console.error('User snapshot error:', err);
+              let errMsg = err?.message || String(err);
+              if (errMsg.includes('permission') || errMsg.includes('Permission') || errMsg.includes('PERMISSION_DENIED') || errMsg.includes('insufficient')) {
+                setAuthError('Firestore 실시간 갱신 권한 오류가 발생했습니다. 개인 Firebase 설정의 [Rules]에 보안 규칙이 배포되어 있어야 합니다.');
+              }
+            });
+          } catch (snapshotErr) {
+            console.error('Failed to set up user snapshot observer:', snapshotErr);
+          }
+
+          setIsAuthLoading(false);
+        } else {
+          setCurrentUser(null);
+          setAppUser(null);
+          setIsAuthLoading(false);
+        }
+      });
+    } catch (authInitErr: any) {
+      console.error('onAuthStateChanged registration failed:', authInitErr);
+      clearTimeout(authTimeout);
+      setIsAuthLoading(false);
+      setAuthError(`Firebase Auth 초기화 오류: ${authInitErr?.message || authInitErr}`);
+    }
 
     return () => {
-      unsubscribe();
+      clearTimeout(authTimeout);
+      if (unsubscribe) {
+        unsubscribe();
+      }
       if (unsubUserSnap) {
         unsubUserSnap();
       }
@@ -399,6 +416,7 @@ export default function App() {
   const handleGoogleLogin = async () => {
     try {
       setAuthError(null);
+      setIsAuthLoading(true); // Indent load feedback immediately
       // Synchronous popup trigger from user-gesture click context
       await loginWithGoogle();
     } catch (err: any) {
@@ -436,11 +454,21 @@ export default function App() {
 
   const handleLogoutAction = async () => {
     try {
+      safeStorage.removeItem('force_offline_mode');
+      setIsOfflineMode(false);
+      setIsDbLoading(true);
       await logout();
       setCurrentUser(null);
       setAppUser(null);
+      
+      // Force whole-page soft reload to purge and reset all in-memory React and listener states
+      window.location.reload();
     } catch (err) {
       console.error('Sign out error:', err);
+      // Fallback state clearing in case Firebase signOut throws due to network or config errors
+      setCurrentUser(null);
+      setAppUser(null);
+      window.location.reload();
     }
   };
 
@@ -569,6 +597,20 @@ export default function App() {
         return;
       }
 
+      const hasPlaceholders = Object.values(parsed).some(
+        val => typeof val === 'string' && (val.includes('...') || val === '...' || val.trim() === '')
+      );
+      const isApiKeyTooShort = typeof parsed.apiKey === 'string' && parsed.apiKey.trim().length < 15;
+      const isPlaceholderProject = typeof parsed.projectId === 'string' && parsed.projectId.toLowerCase().includes('your');
+
+      if (hasPlaceholders || isApiKeyTooShort || isPlaceholderProject) {
+        setConfigStatus({
+          type: 'error',
+          message: '설정 값에 샘플용 생략 기호(...)나 예시 문구가 포함되어 있습니다. Firebase Console에서 발급받으신 실제 키 값으로 변경하여 입력해 주세요.'
+        });
+        return;
+      }
+
       saveCustomFirebaseConfig(parsed);
       setConfigStatus({ 
         type: 'success', 
@@ -649,9 +691,9 @@ export default function App() {
   // Sync state variables with active changes
   useEffect(() => {
     if (selectedDeptId) {
-      localStorage.setItem('selected_dept_id', selectedDeptId);
+      safeStorage.setItem('selected_dept_id', selectedDeptId);
     } else {
-      localStorage.removeItem('selected_dept_id');
+      safeStorage.removeItem('selected_dept_id');
     }
   }, [selectedDeptId]);
 
@@ -662,7 +704,7 @@ export default function App() {
       return;
     }
 
-    if (localStorage.getItem('force_offline_mode') === 'true') {
+    if (safeStorage.getItem('force_offline_mode') === 'true') {
       setIsOfflineMode(true);
       setIsDbLoading(false);
       return;
@@ -678,11 +720,11 @@ export default function App() {
       console.warn('Real-time sync failed. Falling back to local cache mode:', reason);
       setIsOfflineMode(true);
       
-      const savedDepts = localStorage.getItem('dept_departments');
+      const savedDepts = safeStorage.getItem('dept_departments');
       if (savedDepts) {
         try { setDepartments(JSON.parse(savedDepts)); } catch (e) { setDepartments([]); }
       }
-      const savedMembers = localStorage.getItem('dept_members');
+      const savedMembers = safeStorage.getItem('dept_members');
       if (savedMembers) {
         try { setMembers(JSON.parse(savedMembers)); } catch (e) { setMembers([]); }
       }
@@ -870,10 +912,10 @@ export default function App() {
   // Sync to localStorage
   useEffect(() => {
     if (departments.length > 0) {
-      localStorage.setItem('dept_departments', JSON.stringify(departments));
+      safeStorage.setItem('dept_departments', JSON.stringify(departments));
     }
     if (members.length > 0) {
-      localStorage.setItem('dept_members', JSON.stringify(members));
+      safeStorage.setItem('dept_members', JSON.stringify(members));
     }
   }, [departments, members]);
 
@@ -1898,29 +1940,28 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Offer offline transition instantly if Firestore error */}
-              {(authError.includes('Firestore') || authError.includes('권한') || authError.includes('permission') || authError.includes('database') || authError.includes('사용자 정보를')) && (
-                <div className="flex flex-col gap-2 border-t border-rose-200/50 pt-2.5 mt-1">
-                  <button
-                    type="button"
-                    onClick={enableOfflineMode}
-                    className="w-full py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-[10px] font-extrabold transition-all hover:scale-[1.01] text-center cursor-pointer"
-                  >
-                    오프라인 캐시 전용 모드로 시작하기 (오류 우회/비로그인 기능)
-                  </button>
-                  
-                  <button
-                    type="button"
-                    onClick={() => {
-                      localStorage.removeItem('CUSTOM_FIREBASE_CONFIG');
-                      window.location.reload();
-                    }}
-                    className="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-750 border border-slate-200 rounded-xl text-[10px] font-extrabold transition-all text-center cursor-pointer"
-                  >
-                    커스텀 설정 초기화하고 기본 데모 DB로 시도
-                  </button>
-                </div>
-              )}
+              {/* Offer offline transition instantly if any Firestore/Auth error occurs */}
+              <div className="flex flex-col gap-2 border-t border-rose-200/50 pt-2.5 mt-1">
+                <button
+                  type="button"
+                  onClick={enableOfflineMode}
+                  className="w-full py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-[10px] font-extrabold transition-all hover:scale-[1.01] text-center cursor-pointer"
+                >
+                  오프라인 캐시 전용 모드로 시작하기 (오류 우회 / 비로그인 기능)
+                </button>
+                
+                <button
+                  type="button"
+                  onClick={() => {
+                    safeStorage.removeItem('CUSTOM_FIREBASE_CONFIG');
+                    safeStorage.removeItem('force_offline_mode');
+                    window.location.reload();
+                  }}
+                  className="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-750 border border-slate-200 rounded-xl text-[10px] font-extrabold transition-all text-center cursor-pointer"
+                >
+                  커스텀 설정 초기화하고 기본 데모 DB로 시도
+                </button>
+              </div>
             </div>
           )}
 
@@ -2316,7 +2357,7 @@ export default function App() {
                           <button
                             type="button"
                             onClick={() => {
-                              localStorage.setItem('force_offline_mode', 'true');
+                              safeStorage.setItem('force_offline_mode', 'true');
                               setIsOfflineMode(true);
                               setIsDbLoading(false);
                             }}
@@ -2335,7 +2376,7 @@ export default function App() {
                           <button
                             type="button"
                             onClick={() => {
-                              localStorage.removeItem('force_offline_mode');
+                              safeStorage.removeItem('force_offline_mode');
                               window.location.reload();
                             }}
                             className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded text-[9px] font-black cursor-pointer transition-colors"
@@ -2352,7 +2393,7 @@ export default function App() {
                           <button
                             type="button"
                             onClick={() => {
-                              localStorage.setItem('force_offline_mode', 'true');
+                              safeStorage.setItem('force_offline_mode', 'true');
                               window.location.reload();
                             }}
                             className="bg-slate-100 hover:bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-[9px] font-black cursor-pointer transition-colors"
