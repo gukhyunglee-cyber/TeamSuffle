@@ -90,9 +90,11 @@ export { app };
 
 let db: any;
 try {
+  const isIframe = typeof window !== 'undefined' && window.self !== window.top;
+  const dbSettings = isIframe ? { experimentalForceLongPolling: true } : {};
   db = firebaseConfig.firestoreDatabaseId
-    ? initializeFirestore(app, { experimentalForceLongPolling: true }, firebaseConfig.firestoreDatabaseId)
-    : initializeFirestore(app, { experimentalForceLongPolling: true });
+    ? initializeFirestore(app, dbSettings, firebaseConfig.firestoreDatabaseId)
+    : initializeFirestore(app, dbSettings);
 } catch (err) {
   console.warn('initializeFirestore with long polling failed or already initialized, falling back:', err);
   try {

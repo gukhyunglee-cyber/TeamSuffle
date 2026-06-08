@@ -301,8 +301,32 @@ export default function App() {
           }, 7000);
           
           try {
+            const getDocWithRetry = async (docRef: any, maxRetries = 3, delayMs = 1500) => {
+              let lastErr: any;
+              for (let i = 0; i < maxRetries; i++) {
+                try {
+                  return await getDoc(docRef);
+                } catch (err: any) {
+                  lastErr = err;
+                  const errMsg = err?.message || String(err);
+                  if (
+                    errMsg.includes('offline') ||
+                    errMsg.toLowerCase().includes('failed to get document') ||
+                    errMsg.toLowerCase().includes('client is offline') ||
+                    errMsg.toLowerCase().includes('network')
+                  ) {
+                    console.warn(`Firestore getDoc failed (attempt ${i + 1}/${maxRetries}). Retrying in ${delayMs}ms...`);
+                    await new Promise(resolve => setTimeout(resolve, delayMs));
+                    continue;
+                  }
+                  throw err;
+                }
+              }
+              throw lastErr;
+            };
+
             const userDocRef = doc(db, 'users', firebaseUser.uid);
-            const userSnap = await getDoc(userDocRef);
+            const userSnap = await getDocWithRetry(userDocRef);
             
             let fetchedUser: AppUser;
             if (!userSnap.exists()) {
