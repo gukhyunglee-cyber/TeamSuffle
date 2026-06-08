@@ -4,7 +4,7 @@
  */
 
 import React from 'react';
-import { Trash2 } from 'lucide-react';
+import { Trash2, Edit2 } from 'lucide-react';
 import { Member } from '../types';
 import { motion } from 'motion/react';
 
@@ -13,9 +13,10 @@ interface MemberItemCardProps {
   member: Member;
   onDelete: (id: string) => void;
   onToggleSelect: (id: string) => void;
+  onEdit: (member: Member) => void;
 }
 
-export default function MemberItemCard({ member, onDelete, onToggleSelect }: MemberItemCardProps) {
+export default function MemberItemCard({ member, onDelete, onToggleSelect, onEdit }: MemberItemCardProps) {
   // Safe default for selected is true
   const isSelected = member.selected !== false;
 
@@ -68,14 +69,35 @@ export default function MemberItemCard({ member, onDelete, onToggleSelect }: Mem
         )}
       </div>
 
-      {/* Action delete btn */}
-      <button
-        onClick={() => onDelete(member.id)}
-        className="text-slate-400 hover:text-red-500 hover:bg-slate-50 p-1 rounded-md transition-all cursor-pointer opacity-0 group-hover:opacity-100 focus:opacity-100 shrink-0"
-        aria-label="삭제"
-      >
-        <Trash2 className="w-3 h-3" />
-      </button>
+      <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+        {/* Action edit btn */}
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onEdit(member);
+          }}
+          className="text-slate-400 hover:text-indigo-600 hover:bg-slate-50 p-1 rounded-md transition-all cursor-pointer"
+          aria-label="수정"
+          title="부서원 정보 수정"
+        >
+          <Edit2 className="w-3 h-3" />
+        </button>
+
+        {/* Action delete btn */}
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete(member.id);
+          }}
+          className="text-slate-400 hover:text-red-500 hover:bg-slate-50 p-1 rounded-md transition-all cursor-pointer"
+          aria-label="삭제"
+          title="부서원 삭제"
+        >
+          <Trash2 className="w-3 h-3" />
+        </button>
+      </div>
     </motion.div>
   );
 }

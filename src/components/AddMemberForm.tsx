@@ -3,12 +3,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useRef } from 'react';
-import { UploadCloud, Plus, User, Sparkles, Crop, Move, Check } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import { UploadCloud, Plus, User, Sparkles, Crop, Move, Check, Award } from 'lucide-react';
 import { Member } from '../types';
 
 interface AddMemberFormProps {
-  onAddMember: (member: Omit<Member, 'id'>) => void;
+  onAddMember?: (member: Omit<Member, 'id'>) => void;
+  onSaveMember?: (id: string, updated: Omit<Member, 'id' | 'selected'>) => void;
+  initialMember?: Member | null;
 }
 
 const AVATAR_PRESETS = [
@@ -20,11 +22,24 @@ const AVATAR_PRESETS = [
   'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=150&h=150&fit=crop&crop=faces&q=80',
 ];
 
-export default function AddMemberForm({ onAddMember }: AddMemberFormProps) {
-  const [name, setName] = useState('');
-  const [photoUrl, setPhotoUrl] = useState('');
+export default function AddMemberForm({ onAddMember, onSaveMember, initialMember }: AddMemberFormProps) {
+  const [name, setName] = useState(initialMember ? initialMember.name : '');
+  const [photoUrl, setPhotoUrl] = useState(initialMember ? initialMember.photoUrl : '');
+  const [role, setRole] = useState(initialMember ? (initialMember.role || '부서원') : '부서원');
   const [isDragActive, setIsDragActive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (initialMember) {
+      setName(initialMember.name);
+      setPhotoUrl(initialMember.photoUrl);
+      setRole(initialMember.role || '부서원');
+    } else {
+      setName('');
+      setPhotoUrl('');
+      setRole('부서원');
+    }
+  }, [initialMember]);
 
   // Cropping states
   const [rawImage, setRawImage] = useState<string | null>(null);
@@ -81,15 +96,24 @@ export default function AddMemberForm({ onAddMember }: AddMemberFormProps) {
     // Use a default avatar if none chosen
     const finalPhoto = photoUrl || 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&h=150&fit=crop&crop=faces&q=80';
 
-    onAddMember({
-      name: name.trim(),
-      role: '부서원',
-      photoUrl: finalPhoto,
-    });
+    if (initialMember && onSaveMember) {
+      onSaveMember(initialMember.id, {
+        name: name.trim(),
+        role: role.trim(),
+        photoUrl: finalPhoto,
+      });
+    } else if (onAddMember) {
+      onAddMember({
+        name: name.trim(),
+        role: role.trim(),
+        photoUrl: finalPhoto,
+      });
+    }
 
     // Reset fields
     setName('');
     setPhotoUrl('');
+    setRole('부서원');
   };
 
   const triggerFileSelect = () => {
@@ -285,7 +309,25 @@ export default function AddMemberForm({ onAddMember }: AddMemberFormProps) {
             placeholder="홍길동"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            className="w-full pl-8 pr-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-700 placeholder-slate-400 focus:outline-none focus:border-indigo-505 focus:bg-white transition-all"
+            className="w-full pl-8 pr-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-700 placeholder-slate-400 focus:outline-none focus:border-indigo-500 focus:bg-white transition-all"
+          />
+        </div>
+      </div>
+
+      {/* Role Input */}
+      <div>
+        <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">직책 / 역할</label>
+        <div className="relative">
+          <span className="absolute inset-y-0 left-0 flex items-center pl-2.5 text-slate-400">
+            <Award className="w-3.5 h-3.5" />
+          </span>
+          <input
+            id="input-member-role"
+            type="text"
+            placeholder="부서원, 파트장, 조장 등"
+            value={role}
+            onChange={(e) => setRole(e.target.value)}
+            className="w-full pl-8 pr-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-700 placeholder-slate-400 focus:outline-none focus:border-indigo-500 focus:bg-white transition-all"
           />
         </div>
       </div>
@@ -366,8 +408,8 @@ export default function AddMemberForm({ onAddMember }: AddMemberFormProps) {
         type="submit"
         className="w-full bg-slate-800 hover:bg-slate-900 text-white font-bold py-2 px-3 rounded-lg text-xs transition-all flex items-center justify-center gap-1 cursor-pointer shadow-sm hover:shadow-md"
       >
-        <Plus className="w-3.5 h-3.5" />
-        부서원 등록하기
+        {initialMember ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Plus className="w-3.5 h-3.5" />}
+        <span>{initialMember ? '수정 완료하기' : '부서원 등록하기'}</span>
       </button>
     </form>
   );

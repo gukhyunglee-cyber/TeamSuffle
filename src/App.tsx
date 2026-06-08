@@ -103,6 +103,7 @@ export default function App() {
   const [groupCount, setGroupCount] = useState<number>(3);
   const [groups, setGroups] = useState<Group[]>([]);
   const [isAddMemberModalOpen, setIsAddMemberModalOpen] = useState(false);
+  const [editingMember, setEditingMember] = useState<Member | null>(null);
   
   // Shuffling states
   const [isShuffling, setIsShuffling] = useState(false);
@@ -151,6 +152,13 @@ export default function App() {
   // Delete Member
   const handleDeleteMember = (id: string) => {
     setMembers((prev) => prev.filter((m) => m.id !== id));
+  };
+
+  // Update Member
+  const handleUpdateMember = (id: string, updated: Omit<Member, 'id' | 'selected'>) => {
+    setMembers((prev) =>
+      prev.map((m) => (m.id === id ? { ...m, ...updated } : m))
+    );
   };
 
   // Reset to default roster list
@@ -428,6 +436,10 @@ export default function App() {
                             member={member}
                             onDelete={handleDeleteMember}
                             onToggleSelect={handleToggleSelect}
+                            onEdit={(m) => {
+                              setEditingMember(m);
+                              setIsAddMemberModalOpen(true);
+                            }}
                           />
                         ))}
                       </div>
@@ -454,7 +466,10 @@ export default function App() {
 
                   <button
                     id="btn-trigger-add-modal"
-                    onClick={() => setIsAddMemberModalOpen(true)}
+                    onClick={() => {
+                      setEditingMember(null);
+                      setIsAddMemberModalOpen(true);
+                    }}
                     className="px-3.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white font-extrabold text-[11px] rounded-lg shadow-sm flex items-center gap-1 cursor-pointer transition-all hover:scale-[1.02]"
                   >
                     <Plus className="w-3.5 h-3.5 text-emerald-400" />
@@ -857,7 +872,7 @@ export default function App() {
               <div className="flex items-center justify-between mb-3 pb-2 border-b border-slate-150">
                 <span className="text-xs font-bold text-slate-700 tracking-tight flex items-center gap-1.5">
                   <Users className="w-4 h-4 text-indigo-500" />
-                  부서원 카드 추가
+                  {editingMember ? '부서원 정보 수정' : '부서원 카드 추가'}
                 </span>
                 <button
                   type="button"
@@ -868,10 +883,15 @@ export default function App() {
                 </button>
               </div>
 
-              {/* Renders the add member form layout */}
+              {/* Renders the add/edit member form layout */}
               <AddMemberForm
+                initialMember={editingMember}
                 onAddMember={(newMeta) => {
                   handleAddMember(newMeta);
+                  setIsAddMemberModalOpen(false);
+                }}
+                onSaveMember={(id, updated) => {
+                  handleUpdateMember(id, updated);
                   setIsAddMemberModalOpen(false);
                 }}
               />
