@@ -293,7 +293,7 @@ export default function App() {
     const authTimeout = setTimeout(() => {
       console.warn('Firebase connection / initialization is taking longer than usual.');
       setIsAuthLoading(false);
-    }, 4000);
+    }, 8000);
 
     try {
       unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
@@ -313,7 +313,7 @@ export default function App() {
               console.warn('Firestore user fetch taking longer than usual. Force un-sticking loading screen.');
               setIsAuthLoading(false);
             }
-          }, 3200);
+          }, 7000);
           
           try {
             const userDocRef = doc(db, 'users', firebaseUser.uid);

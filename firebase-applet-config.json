@@ -1,9 +1,10 @@
 {
-  "projectId": "team-shuffle-2f2f9",
-  "appId": "1:383088695645:web:20f62682fe0ca7dcfa30b4",
-  "apiKey": "AIzaSyDNwtXcs2TfVsw1MDcyF-gZCVPyV6aaH0w",
-  "authDomain": "team-shuffle-2f2f9.firebaseapp.com",
-  "storageBucket": "team-shuffle-2f2f9.firebasestorage.app",
-  "messagingSenderId": "383088695645",
+  "projectId": "townhouse-project",
+  "appId": "1:954851500957:web:c5496485680e5491130574",
+  "apiKey": "AIzaSyBCmyTRem2JdtqQsn42TAyZrAI2nfp3_lY",
+  "authDomain": "townhouse-project.firebaseapp.com",
+  "firestoreDatabaseId": "ai-studio-c0382e7a-25e2-49b5-9e56-01484fdb97cc",
+  "storageBucket": "townhouse-project.firebasestorage.app",
+  "messagingSenderId": "954851500957",
   "measurementId": ""
 }

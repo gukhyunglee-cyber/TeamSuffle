@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, signOut, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
+import { getFirestore, doc, getDocFromServer, initializeFirestore } from 'firebase/firestore';
 import defaultFirebaseConfigJson from '../firebase-applet-config.json';
 const defaultFirebaseConfig = defaultFirebaseConfigJson as any;
 
@@ -91,12 +91,14 @@ export { app };
 let db: any;
 try {
   db = firebaseConfig.firestoreDatabaseId
-    ? getFirestore(app, firebaseConfig.firestoreDatabaseId)
-    : getFirestore(app);
+    ? initializeFirestore(app, { experimentalForceLongPolling: true }, firebaseConfig.firestoreDatabaseId)
+    : initializeFirestore(app, { experimentalForceLongPolling: true });
 } catch (err) {
-  console.error('getFirestore failed with specified database ID, trying default database:', err);
+  console.warn('initializeFirestore with long polling failed or already initialized, falling back:', err);
   try {
-    db = getFirestore(app);
+    db = firebaseConfig.firestoreDatabaseId
+      ? getFirestore(app, firebaseConfig.firestoreDatabaseId)
+      : getFirestore(app);
   } catch (err2) {
     console.error('getFirestore completely failed:', err2);
   }
@@ -163,12 +165,6 @@ export async function logout() {
           if (key && (key.toLowerCase().includes('firebase') || key.toLowerCase().includes('g_state'))) {
             sessionStorage.removeItem(key);
           }
-        }
-        // Purge default Firebase IndexedDB databases to reset authentication states
-        if (window.indexedDB && window.indexedDB.deleteDatabase) {
-          window.indexedDB.deleteDatabase('firebaseLocalStorageDb');
-          // Purge firestore offline cache DB too if present
-          window.indexedDB.deleteDatabase('firestore/[DEFAULT]/team-shuffle-2f2f9/main');
         }
       } catch (cacheErr) {
         console.warn('Failed to completely clean secondary auth storage:', cacheErr);
