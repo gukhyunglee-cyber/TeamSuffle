@@ -86,6 +86,8 @@ export default function App() {
   const [authError, setAuthError] = useState<string | null>(null);
   const [showDomainSettings, setShowDomainSettings] = useState<boolean>(false);
   const [showFirebaseSettings, setShowFirebaseSettings] = useState<boolean>(false);
+  const [configStatus, setConfigStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [showConfigConfirmReset, setShowConfigConfirmReset] = useState<boolean>(false);
   const [customConfigInput, setCustomConfigInput] = useState<string>(() => {
     if (typeof window !== 'undefined') {
       const stored = localStorage.getItem('CUSTOM_FIREBASE_CONFIG');
@@ -382,30 +384,38 @@ export default function App() {
 
   const handleSaveFirebaseConfig = () => {
     try {
+      setConfigStatus(null);
       if (!customConfigInput.trim()) {
-        alert('Firebase Config JSON을 입력해 주세요.');
+        setConfigStatus({ type: 'error', message: 'Firebase Config JSON을 입력해 주세요.' });
         return;
       }
       const parsed = JSON.parse(customConfigInput.trim());
       if (!parsed.apiKey || !parsed.projectId) {
-        alert('올바른 Firebase (JSON) 정보가 아닙니다. apiKey와 projectId가 포함되어 있는지 확인해 주세요.');
+        setConfigStatus({ type: 'error', message: '올바른 Firebase (JSON) 정보가 아닙니다. apiKey와 projectId가 포함되어 있는지 확인해 주세요.' });
         return;
       }
       saveCustomFirebaseConfig(parsed);
-      alert('커스텀 Firebase 설정이 성공적으로 저장되었습니다. 적용을 위해 화면이 새로고침됩니다!');
-      window.location.reload();
+      setConfigStatus({ type: 'success', message: '설정이 성공적으로 저장되었습니다! 적용을 위해 1초 후 화면이 자동으로 새로고침됩니다.' });
+      setTimeout(() => {
+        window.location.reload();
+      }, 1200);
     } catch (e: any) {
-      alert('올바른 JSON 형식이 아닙니다: ' + e.message);
+      setConfigStatus({ type: 'error', message: '올바른 JSON 형식이 아닙니다: ' + e.message });
     }
   };
 
   const handleResetFirebaseConfig = () => {
-    if (confirm('커스텀 설정을 초기화하고 기본 데모 Firebase 설정으로 되돌리시겠습니까?')) {
-      saveCustomFirebaseConfig(null);
-      setCustomConfigInput('');
-      alert('기본 설정으로 환원되었습니다. 적용을 위해 화면이 새로고침됩니다!');
-      window.location.reload();
+    if (!showConfigConfirmReset) {
+      setShowConfigConfirmReset(true);
+      return;
     }
+    saveCustomFirebaseConfig(null);
+    setCustomConfigInput('');
+    setShowConfigConfirmReset(false);
+    setConfigStatus({ type: 'success', message: '기본 데모 설정으로 환원되었습니다! 적용을 위해 1초 후 화면이 자동으로 새로고침됩니다.' });
+    setTimeout(() => {
+      window.location.reload();
+    }, 1200);
   };
 
   // Admin user approval actions
@@ -1511,6 +1521,17 @@ export default function App() {
                   발급받으신 Firebase 개인 프로젝트의 웹 앱 SDK 설정 JSON 객체를 붙여넣어, 현재 호스팅 설정을 손쉽게 갈아끼우고 연동하실 수 있습니다.
                 </p>
 
+                {/* Inline status notification */}
+                {configStatus && (
+                  <div className={`p-2.5 rounded-xl border text-[9.5px] font-bold leading-normal ${
+                    configStatus.type === 'success' 
+                      ? 'bg-emerald-50 border-emerald-100 text-emerald-800' 
+                      : 'bg-rose-50 border-rose-100 text-rose-800'
+                  }`}>
+                    {configStatus.message}
+                  </div>
+                )}
+
                 {/* Current Active Config Information Badge */}
                 <div className="bg-slate-100/90 border border-slate-200 rounded-xl p-2 flex flex-col gap-1 shadow-2xs">
                   <span className="text-[9px] text-slate-400 font-extrabold tracking-wider uppercase">현재 연동 중인 프로젝트 ID</span>
@@ -1532,7 +1553,10 @@ export default function App() {
   "appId": "..."
 }`}
                     value={customConfigInput}
-                    onChange={(e) => setCustomConfigInput(e.target.value)}
+                    onChange={(e) => {
+                      setCustomConfigInput(e.target.value);
+                      if (configStatus) setConfigStatus(null);
+                    }}
                     rows={6}
                     className="w-full p-2.5 bg-white border border-slate-200 rounded-lg font-mono text-[9.5px] text-slate-700 focus:outline-none focus:ring-1 focus:ring-indigo-500 shadow-3xs select-text focus:border-indigo-400 leading-normal"
                     style={{ whiteSpace: 'pre' }}
@@ -1540,16 +1564,30 @@ export default function App() {
                 </div>
 
                 {/* Action buttons */}
-                <div className="flex justify-between items-center mt-1 pt-1.5 border-t border-slate-100">
-                  <button
-                    onClick={handleResetFirebaseConfig}
-                    className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 border border-slate-200 rounded-lg text-[9.5px] font-extrabold transition-all cursor-pointer shadow-3xs"
-                  >
-                    기본 설정으로 되돌리기
-                  </button>
+                <div className="flex justify-between items-center mt-1 pt-1.5 border-t border-slate-100 gap-1.5">
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={handleResetFirebaseConfig}
+                      className={`px-2.5 py-1.5 rounded-lg text-[9.5px] font-extrabold transition-all cursor-pointer shadow-3xs border ${
+                        showConfigConfirmReset 
+                          ? 'bg-rose-600 hover:bg-rose-700 text-white border-rose-700' 
+                          : 'bg-slate-100 hover:bg-slate-200 text-slate-600 border-slate-200'
+                      }`}
+                    >
+                      {showConfigConfirmReset ? '정말 되돌릴까요? (클릭하여 확인)' : '기본 설정으로 되돌리기'}
+                    </button>
+                    {showConfigConfirmReset && (
+                      <button
+                        onClick={() => setShowConfigConfirmReset(false)}
+                        className="px-2 py-1.5 bg-white hover:bg-slate-50 text-slate-400 border border-slate-200 rounded-lg text-[9.5px] font-bold"
+                      >
+                        취소
+                      </button>
+                    )}
+                  </div>
                   <button
                     onClick={handleSaveFirebaseConfig}
-                    className="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-[9.5px] font-extrabold transition-all cursor-pointer shadow-3xs hover:scale-[1.01] active:scale-[0.99]"
+                    className="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-[9.5px] font-extrabold transition-all cursor-pointer shadow-3xs hover:scale-[1.01] active:scale-[0.99] shrink-0"
                   >
                     커스텀 설정 저장 및 적용
                   </button>
