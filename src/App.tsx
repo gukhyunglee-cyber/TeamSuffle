@@ -382,10 +382,14 @@ export default function App() {
             console.error('Error fetching/creating user profile:', err);
             let errMsg = err?.message || String(err);
             if (errMsg.includes('permission') || errMsg.includes('Permission') || errMsg.includes('PERMISSION_DENIED') || errMsg.includes('insufficient')) {
-              setAuthError('Firestore 연동 실패: 데이터베이스 권한 오류(Missing or insufficient permissions)가 발생했습니다. 개인 Firebase 프로젝트를 새로 연동하신 경우, [Firebase Console > Firestore Database] 메뉴에서 데이터베이스가 생성되었는지, 그리고 [Rules] 탭에 보안 규칙(firestore.rules 파일 내용)이 올바르게 배포되었는지 확인해야 합니다.');
+              setAuthError('Firestore 연동 실패: 데이터베이스 권한이 부족합니다. Firebase Console의 [Firestore Database] > [Rules] 탭에 적절한 보안 규칙이 설정되어 있는지 확인하세요.');
+            } else if (errMsg.includes('timeout') || errMsg.includes('offline')) {
+              setAuthError('Firestore 연결 타임아웃: 데이터베이스를 찾을 수 없거나 연결할 수 없습니다. Firebase Console에서 [Firestore Database]가 실제로 "Create(생성)" 되었는지 확인해주세요.');
             } else {
               setAuthError(`사용자 정보를 데이터베이스에서 불러오지 못했습니다: ${errMsg}`);
             }
+            setIsAuthLoading(false);
+            return;
           }
 
           // Set up snapshot observer to listen for real-time manager approval
@@ -640,6 +644,14 @@ export default function App() {
 
         // 1. Snapshot for Departments
         unsubscribeDepts = onSnapshot(deptsRef, async (deptSnap) => {
+          syncDone = true;
+          if (syncTimeout) {
+            clearTimeout(syncTimeout);
+            syncTimeout = null;
+          }
+          setIsOfflineMode(false);
+          setIsDbLoading(false);
+
           if (deptSnap.empty) {
             // Seed default departments & members
             console.log('Seed-checking: Firestore empty. Starting default seeding...');
@@ -713,14 +725,6 @@ export default function App() {
           if (sortedDepts.length > 0 && !selectedDeptId) {
             setSelectedDeptId(sortedDepts[0].id);
           }
-
-          syncDone = true;
-          if (syncTimeout) {
-            clearTimeout(syncTimeout);
-            syncTimeout = null;
-          }
-          setIsOfflineMode(false);
-          setIsDbLoading(false);
         }, (err) => {
           console.warn('Departments subscription blocked:', err);
           fallbackToOffline(err);
@@ -1887,6 +1891,36 @@ export default function App() {
                   </span>
                 </div>
               </div>
+
+              {authError.includes('권한') && (
+                <div className="mt-2 bg-white/60 rounded-xl p-3 border border-rose-200">
+                  <span className="text-[10px] font-bold text-rose-900 block mb-2">💡 Firebase Console의 [Firestore Database] &gt; [Rules]에 다음 코드를 복사해서 붙여넣으세요:</span>
+                  <div className="relative group">
+                    <pre className="text-[9px] text-slate-800 bg-white p-2.5 rounded-lg overflow-x-auto border border-slate-200 max-h-32">
+{`rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if true; // ⚠️ 개발용 임시 설정
+    }
+  }
+}`}
+                    </pre>
+                    <button 
+                      onClick={() => {
+                        try {
+                          navigator.clipboard.writeText("rules_version = '2';\nservice cloud.firestore {\n  match /databases/{database}/documents {\n    match /{document=**} {\n      allow read, write: if true;\n    }\n  }\n}");
+                          alert("클립보드에 복사되었습니다.");
+                        } catch(e) {}
+                      }}
+                      className="absolute top-1.5 right-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 text-[9px] px-2 py-1 rounded font-bold border border-indigo-200 opacity-0 group-hover:opacity-100 transition-opacity"
+                    >
+                      규칙 복사
+                    </button>
+                  </div>
+                  <span className="text-[9px] text-rose-600 mt-2 block font-medium">* 위 코드는 빠른 테스트를 위한 전체 허용 규칙입니다. 추후 프로덕션에서는 보안을 강화해야 합니다.</span>
+                </div>
+              )}
 
               {/* Offer offline transition instantly if any Firestore/Auth error occurs */}
               <div className="flex flex-col gap-2 border-t border-rose-200/50 pt-2.5 mt-1">

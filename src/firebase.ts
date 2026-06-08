@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, signOut, onAuthStateChanged } from 'firebase/auth';
+import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, signOut, onAuthStateChanged, initializeAuth, browserLocalPersistence, inMemoryPersistence } from 'firebase/auth';
 import { getFirestore, doc, getDocFromServer, initializeFirestore } from 'firebase/firestore';
 import defaultFirebaseConfigJson from '../firebase-applet-config.json';
 const defaultFirebaseConfig = defaultFirebaseConfigJson as any;
@@ -90,28 +90,28 @@ export { app };
 
 let db: any;
 try {
-  const dbSettings = { experimentalForceLongPolling: true };
   db = firebaseConfig.firestoreDatabaseId
-    ? initializeFirestore(app, dbSettings, firebaseConfig.firestoreDatabaseId)
-    : initializeFirestore(app, dbSettings);
+    ? getFirestore(app, firebaseConfig.firestoreDatabaseId)
+    : getFirestore(app);
 } catch (err) {
-  console.warn('initializeFirestore with long polling failed or already initialized, falling back:', err);
-  try {
-    db = firebaseConfig.firestoreDatabaseId
-      ? getFirestore(app, firebaseConfig.firestoreDatabaseId)
-      : getFirestore(app);
-  } catch (err2) {
-    console.error('getFirestore completely failed:', err2);
-  }
+  console.error('getFirestore completely failed:', err);
 }
 
 export { db };
 
 let auth: any;
 try {
-  auth = getAuth(app);
+  const isIframe = typeof window !== 'undefined' && window.self !== window.top;
+  auth = initializeAuth(app, {
+    persistence: isIframe ? inMemoryPersistence : browserLocalPersistence,
+  });
 } catch (err) {
-  console.error('getAuth failed:', err);
+  console.warn('initializeAuth failed, falling back to getAuth:', err);
+  try {
+    auth = getAuth(app);
+  } catch (err2) {
+    console.error('getAuth failed:', err2);
+  }
 }
 
 export { auth };
