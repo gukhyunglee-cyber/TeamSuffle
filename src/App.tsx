@@ -25,7 +25,13 @@ import {
   Lock,
   Unlock,
   Settings,
-  Edit3
+  Edit3,
+  ExternalLink,
+  AlertTriangle,
+  Info,
+  Copy,
+  ChevronDown,
+  ChevronUp
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Member, Group, Department, AppUser } from './types';
@@ -43,7 +49,7 @@ import {
   writeBatch
 } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
-import { db, auth, loginWithGoogle, logout, authenticateApp, testConnection, handleFirestoreError, OperationType } from './firebase';
+import { db, auth, loginWithGoogle, loginWithGoogleRedirect, logout, authenticateApp, testConnection, handleFirestoreError, OperationType, getLoadedFirebaseConfig, saveCustomFirebaseConfig } from './firebase';
 
 function shuffleArray<T>(array: T[]): T[] {
   const arr = [...array];
@@ -77,6 +83,22 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [appUser, setAppUser] = useState<AppUser | null>(null);
   const [isAuthLoading, setIsAuthLoading] = useState<boolean>(true);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [showDomainSettings, setShowDomainSettings] = useState<boolean>(false);
+  const [showFirebaseSettings, setShowFirebaseSettings] = useState<boolean>(false);
+  const [customConfigInput, setCustomConfigInput] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      const stored = localStorage.getItem('CUSTOM_FIREBASE_CONFIG');
+      if (stored) {
+        try {
+          return JSON.stringify(JSON.parse(stored), null, 2);
+        } catch {
+          return stored;
+        }
+      }
+    }
+    return '';
+  });
   const [users, setUsers] = useState<AppUser[]>([]);
 
   // Departments State
@@ -312,10 +334,38 @@ export default function App() {
   // Handle auth actions
   const handleGoogleLogin = async () => {
     try {
-      setIsAuthLoading(true);
+      setAuthError(null);
+      // Synchronous popup trigger from user-gesture click context
       await loginWithGoogle();
-    } catch (err) {
+    } catch (err: any) {
       console.error('Google Sign-In Error:', err);
+      let errMsg = err?.message || String(err);
+      
+      // Categorize and provide friendly instructions in Korean
+      if (err?.code === 'auth/popup-blocked') {
+        errMsg = '브라우저에서 팝업이 차단되었습니다. 주소창 우측 또는 브라우저 설정을 통해 팝업창 허용을 승인해주시기 바랍니다.';
+      } else if (err?.code === 'auth/unauthorized-domain' || errMsg?.includes('unauthorized-domain') || errMsg?.includes('unauthorized_domain') || errMsg?.includes('identity-services/web/unauthorized-domain')) {
+        errMsg = 'Firebase 인증 승인 도메인(Authorized Domain) 설정이 완료되지 않았습니다. 관리자 계정으로 [Firebase Console > Authentication > Settings > Authorized domains]에 현재 도메인을 추가해야 합니다.';
+      } else if (errMsg?.includes('iframe') || errMsg?.includes('cookie') || errMsg?.includes('cross-origin') || errMsg?.includes('network-request-failed') || errMsg?.includes('storage') || errMsg?.includes('partitioned')) {
+        errMsg = '브라우저의 iframe 보안 정책으로 인해 로그인이 실패했습니다. 위 🔔 알림의 [새 창에서 실행하기] 버튼을 통해 독립된 새 탭에서 열어주세요.';
+      } else {
+        errMsg = `로그인 중 오류가 발생했습니다: ${errMsg}`;
+      }
+      
+      setAuthError(errMsg);
+      setIsAuthLoading(false);
+    }
+  };
+
+  const handleGoogleRedirectLogin = async () => {
+    try {
+      setAuthError(null);
+      setIsAuthLoading(true);
+      await loginWithGoogleRedirect();
+    } catch (err: any) {
+      console.error('Google Redirect Sign-In Error:', err);
+      let errMsg = err?.message || String(err);
+      setAuthError(`리다이렉트 로그인 실패: ${errMsg}`);
       setIsAuthLoading(false);
     }
   };
@@ -327,6 +377,34 @@ export default function App() {
       setAppUser(null);
     } catch (err) {
       console.error('Sign out error:', err);
+    }
+  };
+
+  const handleSaveFirebaseConfig = () => {
+    try {
+      if (!customConfigInput.trim()) {
+        alert('Firebase Config JSON을 입력해 주세요.');
+        return;
+      }
+      const parsed = JSON.parse(customConfigInput.trim());
+      if (!parsed.apiKey || !parsed.projectId) {
+        alert('올바른 Firebase (JSON) 정보가 아닙니다. apiKey와 projectId가 포함되어 있는지 확인해 주세요.');
+        return;
+      }
+      saveCustomFirebaseConfig(parsed);
+      alert('커스텀 Firebase 설정이 성공적으로 저장되었습니다. 적용을 위해 화면이 새로고침됩니다!');
+      window.location.reload();
+    } catch (e: any) {
+      alert('올바른 JSON 형식이 아닙니다: ' + e.message);
+    }
+  };
+
+  const handleResetFirebaseConfig = () => {
+    if (confirm('커스텀 설정을 초기화하고 기본 데모 Firebase 설정으로 되돌리시겠습니까?')) {
+      saveCustomFirebaseConfig(null);
+      setCustomConfigInput('');
+      alert('기본 설정으로 환원되었습니다. 적용을 위해 화면이 새로고침됩니다!');
+      window.location.reload();
     }
   };
 
@@ -1248,46 +1326,237 @@ export default function App() {
 
   // 2. Google Login Landing Screen
   if (!currentUser || !appUser) {
+    const isInIframe = window.self !== window.top;
+
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center font-sans text-slate-900 p-4 select-none relative overflow-hidden">
         {/* Ambient background decoration */}
         <div className="absolute top-[-10%] right-[-10%] w-[45%] h-[45%] bg-indigo-50/50 rounded-full blur-3xl -z-10" />
         <div className="absolute bottom-[-10%] left-[-10%] w-[45%] h-[45%] bg-violet-50/40 rounded-full blur-3xl -z-10" />
 
-        <div className="w-full max-w-md bg-white border border-slate-200/90 rounded-3xl p-6 sm:p-8 shadow-2xl flex flex-col items-center text-center relative">
-          <div className="w-12 h-12 bg-indigo-600 rounded-2xl flex items-center justify-center shadow-lg shadow-indigo-150 mb-5">
-            <div className="w-6 h-6 border-3 border-white rounded-md"></div>
+        <div className="w-full max-w-md bg-white border border-slate-200/90 rounded-3xl p-6 sm:p-8 shadow-2xl flex flex-col items-center text-center relative gap-5">
+          <div className="flex flex-col items-center">
+            <div className="w-12 h-12 bg-indigo-600 rounded-2xl flex items-center justify-center shadow-lg shadow-indigo-150 mb-4">
+              <div className="w-6 h-6 border-3 border-white rounded-md"></div>
+            </div>
+
+            <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight text-slate-800 font-display">
+              TeamShuffle 조 편성 엔진
+            </h1>
+            <p className="text-xs text-slate-500 mt-2 leading-relaxed max-w-xs">
+              공정하고 투명한 부서원 셔플 조 추첨 서비스입니다.<br/>
+              구글 계정으로 로그인하여 안전하게 부서 명단을 관리해보세요.
+            </p>
           </div>
 
-          <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight text-slate-800 font-display">
-            TeamShuffle 조 편성 엔진
-          </h1>
-          <p className="text-xs text-slate-500 mt-2 leading-relaxed max-w-sm">
-            공정하고 투명한 부서원 셔플 조 추첨 서비스입니다.<br/>
-            구글 계정으로 로그인하여 안전하게 부서 명단을 관리해보세요.
-          </p>
+          <div className="w-full h-[1px] bg-slate-100 my-1" />
 
-          <div className="w-full h-[1px] bg-slate-100 my-6" />
+          {/* Iframe Warnings and Actions */}
+          {isInIframe && (
+            <div id="iframe-restriction-alert" className="w-full bg-indigo-50/70 border border-indigo-100 rounded-2xl p-4 text-left flex flex-col gap-2.5">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <span className="text-[11px] font-extrabold text-indigo-950 leading-tight block">
+                    구글 크롬/사파리 iframe 보안 이슈 안내
+                  </span>
+                  <span className="text-[10px] text-indigo-800 mt-1 block leading-normal font-semibold">
+                    브라우저의 "3자 쿠키 및 로컬 저장소 제한 정책"으로 인해 AI Studio 내부화면(iframe)에서는 구글 로그인창이 차단되거나 깜빡이고 동작하지 않을 수 있습니다. 
+                  </span>
+                </div>
+              </div>
+              
+              {/* Native user gesture anchor link to open in new tab */}
+              <a
+                href={window.location.href}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="w-full flex items-center justify-center gap-1.5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-extrabold transition-all shadow-sm hover:scale-[1.01] active:scale-[0.99]"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                <span>독립된 새 창(새 탭)에서 실행하기</span>
+              </a>
+            </div>
+          )}
 
-          {/* Real login trigger button */}
-          <button
-            onClick={handleGoogleLogin}
-            className="w-full flex items-center justify-center gap-3 px-5 py-3.5 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-extrabold rounded-2xl transition-all cursor-pointer shadow-xs hover:border-slate-300 active:scale-[0.99] hover:scale-[1.01]"
-          >
-            {/* Custom Google inline icon */}
-            <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none">
-              <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
-              <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
-              <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l3.66-2.85z" fill="#FBBC05"/>
-              <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.85c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
-            </svg>
-            <span className="text-sm text-slate-700 font-bold">Google 계정으로 계속하기</span>
-          </button>
+          {/* Error messages if any */}
+          {authError && (
+            <div id="auth-error-alert" className="w-full bg-rose-50 border border-rose-100 rounded-2xl p-4 text-left flex gap-3">
+              <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5 animate-pulse" />
+              <div className="flex-1">
+                <span className="text-xs font-extrabold text-rose-900 leading-tight block">
+                  로그인 차단 알림
+                </span>
+                <span className="text-[11px] text-rose-700 mt-1 block leading-relaxed break-all font-semibold">
+                  {authError}
+                </span>
+              </div>
+            </div>
+          )}
 
-          <p className="text-[10px] text-slate-400 mt-5 font-bold leading-normal">
+          {/* Standard Login trigger button (Always shown for high visibility across all environments) */}
+          <div className="w-full flex flex-col gap-3">
+            <button
+              onClick={handleGoogleLogin}
+              className="w-full flex items-center justify-center gap-3 px-5 py-3.5 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-extrabold rounded-2xl transition-all cursor-pointer shadow-xs hover:border-slate-300 active:scale-[0.99] hover:scale-[1.01]"
+            >
+              {/* Custom Google inline icon */}
+              <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none">
+                <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+                <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+                <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l3.66-2.85z" fill="#FBBC05"/>
+                <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.85c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+              </svg>
+              <span className="text-sm text-slate-700 font-bold">Google 계정으로 계속하기</span>
+            </button>
+
+            {/* Redirect Login Flow as a foolproof fallback */}
+            <div className="text-center mt-0.5">
+              <span className="text-[10px] text-slate-400 font-semibold block mb-1">
+                팝업이 차단되거나 로그인창이 보이지 않나요?
+              </span>
+              <button
+                onClick={handleGoogleRedirectLogin}
+                className="text-indigo-600 hover:text-indigo-700 hover:underline text-[11px] font-extrabold cursor-pointer inline-flex items-center gap-1.5"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>페이지 이동(Redirect) 방식으로 로그인하기</span>
+              </button>
+            </div>
+          </div>
+
+          <p className="text-[10px] text-slate-400 font-bold leading-normal">
             최초 로그인 시 승인 대기로 등록되며,<br/>
             최고 관리자 승인 후 즉시 사용 가능합니다.
           </p>
+
+          {/* Authorized Domains settings instruction box for Administrator */}
+          <div className="w-full border border-slate-150 rounded-2xl p-3 bg-slate-50/50 text-left">
+            <button
+              onClick={() => setShowDomainSettings(!showDomainSettings)}
+              className="w-full flex items-center justify-between text-slate-500 hover:text-slate-700 transition-colors text-[11px] font-extrabold cursor-pointer"
+            >
+              <span className="flex items-center gap-1.5">
+                <Info className="w-3.5 h-3.5 text-indigo-500" />
+                <span>관리자용 Firebase 승인 도메인 설정 안내</span>
+              </span>
+              {showDomainSettings ? (
+                <ChevronUp className="w-3.5 h-3.5 shrink-0" />
+              ) : (
+                <ChevronDown className="w-3.5 h-3.5 shrink-0" />
+              )}
+            </button>
+
+            {showDomainSettings && (
+              <div className="mt-2 text-[10px] text-slate-500 leading-relaxed font-semibold flex flex-col gap-1.5 border-t border-slate-200/60 pt-2.5">
+                <p>구글 로그인이 동작하기 위해서는 Firebase Authentication의 [승인된 도메인]에 현재 도메인이 등록되어 있어야 합니다.</p>
+                <div className="bg-slate-100 p-2 rounded-lg flex flex-col gap-1 border border-slate-200 select-text">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[9px] text-slate-400 font-extrabold tracking-wider uppercase">현재 도메인</span>
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(window.location.hostname);
+                        alert('도메인이 복사되었습니다: ' + window.location.hostname);
+                      }}
+                      className="text-indigo-600 hover:text-indigo-700 font-extrabold text-[9px] cursor-pointer flex items-center gap-0.5"
+                    >
+                      <Copy className="w-2.5 h-2.5" />
+                      <span>복사</span>
+                    </button>
+                  </div>
+                  <code className="text-[10px] font-mono text-indigo-650 mt-0.5 break-all">
+                    {typeof window !== 'undefined' ? window.location.hostname : '현재 호스트명'}
+                  </code>
+                </div>
+                <ol className="list-decimal pl-3.5 space-y-1 mt-1 text-slate-500">
+                  <li>
+                    <a
+                      href="https://console.firebase.google.com/"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-indigo-600 hover:underline font-bold"
+                    >
+                      Firebase Console
+                    </a>
+                    에 접속합니다.
+                  </li>
+                  <li>해당 프로젝트의 <strong>Authentication</strong> 메뉴로 이동합니다.</li>
+                  <li><strong>Settings</strong> 탭을 클릭한 뒤 <strong>Authorized domains</strong> 목록으로 이동합니다.</li>
+                  <li><strong>Add domain</strong> 버튼을 클릭하여 위 복사한 도메인을 추가해 줍니다.</li>
+                </ol>
+              </div>
+            )}
+          </div>
+
+          {/* Collapsible Custom Firebase SDK Settings */}
+          <div className="w-full border border-slate-150 rounded-2xl p-3 bg-slate-50/50 text-left mt-2.5">
+            <button
+              onClick={() => setShowFirebaseSettings(!showFirebaseSettings)}
+              className="w-full flex items-center justify-between text-slate-500 hover:text-slate-700 transition-colors text-[11px] font-extrabold cursor-pointer"
+            >
+              <span className="flex items-center gap-1.5 font-bold text-slate-600">
+                <Settings className="w-3.5 h-3.5 text-emerald-500" />
+                <span>개인 Firebase SDK 설정 연동 (간편 교체)</span>
+              </span>
+              {showFirebaseSettings ? (
+                <ChevronUp className="w-3.5 h-3.5 shrink-0 text-slate-400" />
+              ) : (
+                <ChevronDown className="w-3.5 h-3.5 shrink-0 text-slate-400" />
+              )}
+            </button>
+
+            {showFirebaseSettings && (
+              <div className="mt-2 text-[10px] text-slate-500 leading-relaxed font-semibold flex flex-col gap-2 border-t border-slate-200/60 pt-2.5">
+                <p className="text-slate-500 leading-normal font-semibold">
+                  발급받으신 Firebase 개인 프로젝트의 웹 앱 SDK 설정 JSON 객체를 붙여넣어, 현재 호스팅 설정을 손쉽게 갈아끼우고 연동하실 수 있습니다.
+                </p>
+
+                {/* Current Active Config Information Badge */}
+                <div className="bg-slate-100/90 border border-slate-200 rounded-xl p-2 flex flex-col gap-1 shadow-2xs">
+                  <span className="text-[9px] text-slate-400 font-extrabold tracking-wider uppercase">현재 연동 중인 프로젝트 ID</span>
+                  <code className="text-[10px] font-mono text-indigo-700 font-extrabold break-all">
+                    {getLoadedFirebaseConfig().projectId}
+                  </code>
+                </div>
+
+                {/* JSON Textarea paste interface */}
+                <div className="flex flex-col gap-1">
+                  <span className="text-[9px] text-slate-400 font-extrabold tracking-wider uppercase block">Firebase SDK 설정 JSON 객체</span>
+                  <textarea
+                    placeholder={`{
+  "apiKey": "AIzaSy...",
+  "authDomain": "...",
+  "projectId": "...",
+  "storageBucket": "...",
+  "messagingSenderId": "...",
+  "appId": "..."
+}`}
+                    value={customConfigInput}
+                    onChange={(e) => setCustomConfigInput(e.target.value)}
+                    rows={6}
+                    className="w-full p-2.5 bg-white border border-slate-200 rounded-lg font-mono text-[9.5px] text-slate-700 focus:outline-none focus:ring-1 focus:ring-indigo-500 shadow-3xs select-text focus:border-indigo-400 leading-normal"
+                    style={{ whiteSpace: 'pre' }}
+                  />
+                </div>
+
+                {/* Action buttons */}
+                <div className="flex justify-between items-center mt-1 pt-1.5 border-t border-slate-100">
+                  <button
+                    onClick={handleResetFirebaseConfig}
+                    className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 border border-slate-200 rounded-lg text-[9.5px] font-extrabold transition-all cursor-pointer shadow-3xs"
+                  >
+                    기본 설정으로 되돌리기
+                  </button>
+                  <button
+                    onClick={handleSaveFirebaseConfig}
+                    className="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-[9.5px] font-extrabold transition-all cursor-pointer shadow-3xs hover:scale-[1.01] active:scale-[0.99]"
+                  >
+                    커스텀 설정 저장 및 적용
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
     );
