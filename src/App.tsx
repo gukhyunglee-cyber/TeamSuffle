@@ -87,6 +87,18 @@ export default function App() {
   const [isAuthLoading, setIsAuthLoading] = useState<boolean>(true);
   const [authError, setAuthError] = useState<string | null>(null);
   const [users, setUsers] = useState<AppUser[]>([]);
+  const [showLoadingWarning, setShowLoadingWarning] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (isAuthLoading) {
+      const timer = setTimeout(() => {
+        setShowLoadingWarning(true);
+      }, 3500);
+      return () => clearTimeout(timer);
+    } else {
+      setShowLoadingWarning(false);
+    }
+  }, [isAuthLoading]);
 
   // Departments State
   const [departments, setDepartments] = useState<Department[]>(() => {
@@ -1732,13 +1744,70 @@ export default function App() {
   // 1. Loading screen
   if (isAuthLoading) {
     return (
-      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center font-sans text-slate-900 select-none">
-        <div className="flex flex-col items-center gap-4 animate-pulse">
-          <div className="w-12 h-12 bg-indigo-600 rounded-2xl flex items-center justify-center shadow-lg shadow-indigo-150">
-            <div className="w-6 h-6 border-3 border-white rounded-md"></div>
+      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center font-sans text-slate-900 select-none p-4">
+        <div className="w-full max-w-sm flex flex-col items-center gap-6 text-center">
+          <div className="flex flex-col items-center gap-4 animate-pulse">
+            <div className="w-12 h-12 bg-indigo-600 rounded-2xl flex items-center justify-center shadow-lg shadow-indigo-150">
+              <div className="w-6 h-6 border-3 border-white rounded-md"></div>
+            </div>
+            <h1 className="text-xl font-black tracking-tight text-slate-800 font-display">TeamShuffle</h1>
+            <p className="text-xs text-slate-400 font-bold tracking-wider uppercase">보안 연결 및 사용자 정보 구성 중...</p>
           </div>
-          <h1 className="text-xl font-black tracking-tight text-slate-800 font-display">TeamShuffle</h1>
-          <p className="text-xs text-slate-400 font-bold tracking-wider uppercase">보안 연결 및 사용자 정보 구성 중...</p>
+
+          {showLoadingWarning && (
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="w-full bg-white border border-rose-100 rounded-2xl p-5 shadow-lg flex flex-col gap-4 mt-2"
+            >
+              <div className="flex items-start gap-2.5 text-left">
+                <span className="text-lg text-rose-500 mt-0.5">⚠️</span>
+                <div className="flex-1">
+                  <h3 className="text-xs font-bold text-slate-800">연결 지연 안내</h3>
+                  <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
+                    Firebase와의 보안 연결이 지연되고 있습니다. 
+                    인터넷 상태가 느리거나, 파티션 브라우저 보안 이슈일 수 있습니다.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-2 w-full">
+                <button
+                  id="loading-force-offline-btn"
+                  onClick={enableOfflineMode}
+                  className="w-full py-2 px-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl transition duration-150 shadow-sm"
+                >
+                  오프라인 모드로 우선 시작하기 (비로그인)
+                </button>
+                
+                <div className="grid grid-cols-2 gap-1.5">
+                  <button
+                    id="loading-clear-config-btn"
+                    onClick={() => {
+                      safeStorage.removeItem('CUSTOM_FIREBASE_CONFIG');
+                      safeStorage.removeItem('force_offline_mode');
+                      window.location.reload();
+                    }}
+                    className="py-1.5 px-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-[10px] rounded-lg transition duration-150"
+                  >
+                    설정 초기화 후 새로고침
+                  </button>
+                  <button
+                    id="loading-logout-btn"
+                    onClick={async () => {
+                      try {
+                        await logout();
+                      } catch(_) {}
+                      window.location.reload();
+                    }}
+                    className="py-1.5 px-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-[10px] rounded-lg transition duration-150"
+                  >
+                    계정 세션 초기화
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          )}
         </div>
       </div>
     );

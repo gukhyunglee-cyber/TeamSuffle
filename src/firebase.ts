@@ -90,7 +90,8 @@ export { app };
 
 let db: any;
 try {
-  const dbSettings = { experimentalForceLongPolling: true };
+  const isIframe = typeof window !== 'undefined' && window.self !== window.top;
+  const dbSettings = isIframe ? { experimentalForceLongPolling: true } : {};
   db = firebaseConfig.firestoreDatabaseId
     ? initializeFirestore(app, dbSettings, firebaseConfig.firestoreDatabaseId)
     : initializeFirestore(app, dbSettings);
