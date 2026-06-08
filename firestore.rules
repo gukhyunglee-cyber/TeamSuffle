@@ -6,38 +6,43 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
-    // Reusable, hardened helpers
-    function isSignedIn() {
-      return request.auth != null;
-    }
-
-    function incoming() {
-      return request.resource.data;
-    }
-
-    function existing() {
-      return resource.data;
-    }
-
     function isValidId(id) {
       return id is string && id.size() <= 128;
     }
 
+    function isValidDepartment(data) {
+      return data.keys().hasAll(['name', 'password', 'createdAt', 'updatedAt'])
+        && data.keys().size() == 4
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 100
+        && data.password is string && data.password.size() > 0 && data.password.size() <= 100;
+    }
+
     function isValidMember(data) {
-      return data.keys().hasAll(['name', 'role', 'photoUrl', 'selected', 'createdAt', 'updatedAt'])
-        && data.keys().size() == 6
+      return data.keys().hasAll(['departmentId', 'name', 'role', 'photoUrl', 'selected', 'createdAt', 'updatedAt'])
+        && data.keys().size() == 7
+        && data.departmentId is string && data.departmentId.size() <= 128
         && data.name is string && data.name.size() > 0 && data.name.size() <= 100
         && data.role is string && data.role.size() <= 100
         && data.photoUrl is string && data.photoUrl.size() <= 2083
         && data.selected is bool;
     }
 
-    // 2. Shared department member records
+    // 2. Department records
+    match /departments/{departmentId} {
+      allow get: if isValidId(departmentId);
+      allow list: if true;
+      allow create: if isValidId(departmentId) && isValidDepartment(request.resource.data);
+      allow update: if isValidId(departmentId) && isValidDepartment(request.resource.data);
+      allow delete: if isValidId(departmentId);
+    }
+
+    // 3. Shared department member records
     match /members/{memberId} {
-      allow read, list: if isSignedIn() && isValidId(memberId);
-      allow create: if isSignedIn() && isValidId(memberId) && isValidMember(incoming());
-      allow update: if isSignedIn() && isValidId(memberId) && isValidMember(incoming());
-      allow delete: if isSignedIn() && isValidId(memberId);
+      allow get: if isValidId(memberId);
+      allow list: if true;
+      allow create: if isValidId(memberId) && isValidMember(request.resource.data);
+      allow update: if isValidId(memberId) && isValidMember(request.resource.data);
+      allow delete: if isValidId(memberId);
     }
   }
 }

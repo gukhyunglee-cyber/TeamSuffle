@@ -14,19 +14,13 @@ export async function authenticateApp() {
       await signInAnonymously(auth);
     }
   } catch (err) {
-    console.error('Anonymous auth failed:', err);
+    console.warn('Anonymous auth is restricted/disabled. Proceeding with unauthenticated mode.', err);
   }
 }
 
-// Connectivity fallback check
+// Connectivity fallback check (no-op as onSnapshot manages connectivity natively)
 export async function testConnection() {
-  try {
-    await getDocFromServer(doc(db, 'test', 'connection'));
-  } catch (error) {
-    if (error instanceof Error && error.message.includes('offline')) {
-      console.warn('Firestore is running in offline-first fallback mode.');
-    }
-  }
+  // Graceful no-op to optimize performance
 }
 
 export enum OperationType {

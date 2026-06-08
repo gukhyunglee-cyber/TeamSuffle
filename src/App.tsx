@@ -21,10 +21,14 @@ import {
   Plus,
   Download,
   Smartphone,
-  Upload
+  Upload,
+  Lock,
+  Unlock,
+  Settings,
+  Edit3
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Member, Group } from './types';
+import { Member, Group, Department } from './types';
 import { DEFAULT_MEMBERS } from './data/defaultMembers';
 import AddMemberForm from './components/AddMemberForm';
 import MemberItemCard from './components/MemberItemCard';
@@ -48,18 +52,91 @@ function shuffleArray<T>(array: T[]): T[] {
   return arr;
 }
 
+// Helper to wrap Firestore Promises with an absolute timeout limit (2.5 seconds) to prevent infinite pending locks
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number = 2500): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error('네트워크 응답 시간 초과 (Timeout)'));
+    }, timeoutMs);
+    promise
+      .then((res) => {
+        clearTimeout(timer);
+        resolve(res);
+      })
+      .catch((err) => {
+        clearTimeout(timer);
+        reject(err);
+      });
+  });
+}
+
 export default function App() {
-  // Members State (Synchronized automatically with Firestore in Real-time)
-  const [members, setMembers] = useState<Member[]>([]);
-  const [isDbLoading, setIsDbLoading] = useState<boolean>(true);
+  // Departments State
+  const [departments, setDepartments] = useState<Department[]>(() => {
+    const saved = localStorage.getItem('dept_departments');
+    if (saved) {
+      try { return JSON.parse(saved); } catch (e) { return []; }
+    }
+    return [];
+  });
+  
+  // Selected department ID
+  const [selectedDeptId, setSelectedDeptId] = useState<string | null>(() => {
+    return localStorage.getItem('selected_dept_id') || null;
+  });
+
+  // Members State
+  const [members, setMembers] = useState<Member[]>(() => {
+    const saved = localStorage.getItem('dept_members');
+    if (saved) {
+      try { return JSON.parse(saved); } catch (e) { return []; }
+    }
+    return [];
+  });
+
+  // Unlocked department IDs (session-based cache for password authorization)
+  const [unlockedDepts, setUnlockedDepts] = useState<string[]>([]);
+
+  // Offline or online states
+  const [isOfflineMode, setIsOfflineMode] = useState<boolean>(() => {
+    return localStorage.getItem('force_offline_mode') === 'true';
+  });
+  const [isDbLoading, setIsDbLoading] = useState<boolean>(() => {
+    return localStorage.getItem('force_offline_mode') !== 'true';
+  });
 
   // Navigation active steps: 1 = Member setup / 2 = Shuffling & Results
   const [activeStep, setActiveStep] = useState<1 | 2>(1);
+
+  // Group size controls
+  const [groupCount, setGroupCount] = useState<number>(3);
+  const [groups, setGroups] = useState<Group[]>([]);
+  const [isAddMemberModalOpen, setIsAddMemberModalOpen] = useState(false);
+  const [editingMember, setEditingMember] = useState<Member | null>(null);
+
+  // Department Modals & UI States
+  const [isDeptModalOpen, setIsDeptModalOpen] = useState(false);
+  const [editingDept, setEditingDept] = useState<Department | null>(null);
+  const [deptNameInput, setDeptNameInput] = useState('');
+  const [deptPasswordInput, setDeptPasswordInput] = useState('');
+
+  // Password Verification Dialog States
+  const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
+  const [passwordTargetDeptId, setPasswordTargetDeptId] = useState<string | null>(null);
+  const [passwordInput, setPasswordInput] = useState('');
+  const [passwordSuccessCallback, setPasswordSuccessCallback] = useState<(() => void) | null>(null);
+  const [passwordErrorMsg, setPasswordErrorMsg] = useState('');
 
   // PWA (Progressive Web App) states
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [showInstallBadge, setShowInstallBadge] = useState<boolean>(true);
   const [isInstallGuideOpen, setIsInstallGuideOpen] = useState(false);
+
+  // Shuffling states
+  const [isShuffling, setIsShuffling] = useState(false);
+  const [shufflePhase, setShufflePhase] = useState<'idle' | 'preparing' | 'scrambling' | 'positioning' | 'completed'>('idle');
+  const [activeShuffleMember, setActiveShuffleMember] = useState<Member | null>(null);
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     const handler = (e: Event) => {
@@ -76,7 +153,6 @@ export default function App() {
     };
     window.addEventListener('appinstalled', afterInstallHandler);
 
-    // Initial check for standalone mode
     if (window.matchMedia('(display-mode: standalone)').matches || (navigator as any).standalone) {
       setShowInstallBadge(false);
     }
@@ -95,214 +171,654 @@ export default function App() {
       setDeferredPrompt(null);
       setShowInstallBadge(false);
     } else {
-      // If native prompt is not available (such as on iOS or when using iframe), open the beautiful guide modal
       setIsInstallGuideOpen(true);
     }
   };
 
-  // Group size controls
-  const [groupCount, setGroupCount] = useState<number>(3);
-  const [groups, setGroups] = useState<Group[]>([]);
-  const [isAddMemberModalOpen, setIsAddMemberModalOpen] = useState(false);
-  const [editingMember, setEditingMember] = useState<Member | null>(null);
-  
-  // Shuffling states
-  const [isShuffling, setIsShuffling] = useState(false);
-  const [shufflePhase, setShufflePhase] = useState<'idle' | 'preparing' | 'scrambling' | 'positioning' | 'completed'>('idle');
-  const [activeShuffleMember, setActiveShuffleMember] = useState<Member | null>(null);
-  const [copied, setCopied] = useState(false);
+  // Helper to test structural authorization before doing mutation
+  const checkPasswordAuth = (deptId: string, action: () => void) => {
+    // If already unlocked in session, proceed immediately
+    if (unlockedDepts.includes(deptId)) {
+      action();
+      return;
+    }
 
-  // Real-time Cloud Synchronization of Members list across devices
+    // Find plain Department
+    const dept = departments.find(d => d.id === deptId);
+    if (!dept) {
+      alert('존재하지 않는 부서입니다.');
+      return;
+    }
+
+    // Trigger auth password modal
+    setPasswordTargetDeptId(deptId);
+    setPasswordInput('');
+    setPasswordErrorMsg('');
+    setPasswordSuccessCallback(() => () => {
+      action();
+    });
+    setIsPasswordModalOpen(true);
+  };
+
+  // Submit password input for authorization
+  const handleVerifyPassword = () => {
+    if (!passwordTargetDeptId) return;
+    const dept = departments.find(d => d.id === passwordTargetDeptId);
+    if (!dept) return;
+
+    if (dept.password === passwordInput) {
+      // Success
+      setUnlockedDepts(prev => [...prev, passwordTargetDeptId]);
+      setIsPasswordModalOpen(false);
+      if (passwordSuccessCallback) {
+        passwordSuccessCallback();
+      }
+    } else {
+      setPasswordErrorMsg('비밀번호가 일치하지 않습니다. 부서 생성 시 설정한 권한 비밀번호를 다시 확인하세요.');
+    }
+  };
+
+  // Sync state variables with active changes
   useEffect(() => {
-    let unsubscribe: (() => void) | null = null;
+    if (selectedDeptId) {
+      localStorage.setItem('selected_dept_id', selectedDeptId);
+    } else {
+      localStorage.removeItem('selected_dept_id');
+    }
+  }, [selectedDeptId]);
+
+  // Real-time Cloud Synchronization of Departments & Members
+  useEffect(() => {
+    if (localStorage.getItem('force_offline_mode') === 'true') {
+      setIsOfflineMode(true);
+      setIsDbLoading(false);
+      return;
+    }
+
+    let unsubscribeDepts: (() => void) | null = null;
+    let unsubscribeMembers: (() => void) | null = null;
+    let syncDone = false;
+    let syncTimeout: NodeJS.Timeout | null = null;
+
+    function fallbackToOffline(reason: any) {
+      if (syncDone) return;
+      console.warn('Real-time sync failed. Falling back to local cache mode:', reason);
+      setIsOfflineMode(true);
+      
+      const savedDepts = localStorage.getItem('dept_departments');
+      if (savedDepts) {
+        try { setDepartments(JSON.parse(savedDepts)); } catch (e) { setDepartments([]); }
+      }
+      const savedMembers = localStorage.getItem('dept_members');
+      if (savedMembers) {
+        try { setMembers(JSON.parse(savedMembers)); } catch (e) { setMembers([]); }
+      }
+      setIsDbLoading(false);
+    }
 
     async function initializeSync() {
+      syncTimeout = setTimeout(() => {
+        if (!syncDone) {
+          console.warn('Sync timed out. Switching to offline backup.');
+          if (unsubscribeDepts) { unsubscribeDepts(); unsubscribeDepts = null; }
+          if (unsubscribeMembers) { unsubscribeMembers(); unsubscribeMembers = null; }
+          fallbackToOffline('Firestore responsive timeout (3.5s)');
+        }
+      }, 3500);
+
       try {
-        // 1. Silent anonymous login
         await authenticateApp();
-        // 2. Fallback check
-        await testConnection();
 
+        const deptsRef = collection(db, 'departments');
         const membersRef = collection(db, 'members');
-        
-        // Listen in real-time
-        unsubscribe = onSnapshot(
-          membersRef,
-          async (snapshot) => {
-            if (snapshot.empty) {
-              console.log('Firestore is empty. Seeding default team roster dynamically...');
-              const batch = writeBatch(db);
-              
-              DEFAULT_MEMBERS.forEach((m, idx) => {
-                const mId = m.id;
-                const docRef = doc(db, 'members', mId);
-                const isoNow = new Date(Date.now() - idx * 1000).toISOString();
-                
-                batch.set(docRef, {
-                  name: m.name,
-                  role: m.role || '부서원',
-                  photoUrl: m.photoUrl,
-                  selected: m.selected !== false,
-                  createdAt: isoNow,
-                  updatedAt: isoNow
-                });
-              });
 
-              try {
-                await batch.commit();
-              } catch (err) {
-                handleFirestoreError(err, OperationType.WRITE, 'members');
-              }
-              return;
+        // 1. Snapshot for Departments
+        unsubscribeDepts = onSnapshot(deptsRef, async (deptSnap) => {
+          if (deptSnap.empty) {
+            // Seed default departments & members
+            console.log('Seed-checking: Firestore empty. Starting default seeding...');
+            const batch = writeBatch(db);
+
+            const deptTechId = 'dept-tech';
+            const deptStrategyId = 'dept-strategy';
+
+            const isoNow = new Date().toISOString();
+
+            // Seed departments
+            batch.set(doc(db, 'departments', deptTechId), {
+              name: '기술 연구소',
+              password: '1234',
+              createdAt: isoNow,
+              updatedAt: isoNow
+            });
+
+            batch.set(doc(db, 'departments', deptStrategyId), {
+              name: '전략 기획본부',
+              password: '1234',
+              createdAt: isoNow,
+              updatedAt: isoNow
+            });
+
+            // Seed mapped members
+            DEFAULT_MEMBERS.forEach((m, idx) => {
+              // Dev-tech allocation vs Strategy allocation
+              const isTech = ['m1', 'm3', 'm5', 'm7', 'm11'].includes(m.id);
+              const targetDeptId = isTech ? deptTechId : deptStrategyId;
+              const mIso = new Date(Date.now() - idx * 1000).toISOString();
+
+              batch.set(doc(db, 'members', m.id), {
+                departmentId: targetDeptId,
+                name: m.name,
+                role: m.role || '부서원',
+                photoUrl: m.photoUrl,
+                selected: true,
+                createdAt: mIso,
+                updatedAt: mIso
+              });
+            });
+
+            try {
+              await withTimeout(batch.commit());
+            } catch (err) {
+              console.warn('Seeding failed:', err);
+              fallbackToOffline(err);
             }
-
-            // Sync from cloud
-            const loaded: Member[] = [];
-            snapshot.forEach((docSnap) => {
-              const data = docSnap.data();
-              loaded.push({
-                id: docSnap.id,
-                name: data.name || '',
-                role: data.role || '부서원',
-                photoUrl: data.photoUrl || '',
-                selected: data.selected !== false,
-                createdAt: data.createdAt || new Date().toISOString(),
-                updatedAt: data.updatedAt || new Date().toISOString(),
-              });
-            });
-
-            // Sort by createdAt desc so that newly registered members are at the top
-            const sorted = loaded.sort((a, b) => {
-              const dateA = a.createdAt || '';
-              const dateB = b.createdAt || '';
-              return dateB.localeCompare(dateA);
-            });
-
-            setMembers(sorted);
-            setIsDbLoading(false);
-          },
-          (err) => {
-            console.error('Firestore subscription error:', err);
-            handleFirestoreError(err, OperationType.LIST, 'members');
-            setIsDbLoading(false);
+            return;
           }
-        );
+
+          // Load Departments
+          const loadedDepts: Department[] = [];
+          deptSnap.forEach((docSnap) => {
+            const data = docSnap.data();
+            loadedDepts.push({
+              id: docSnap.id,
+              name: data.name || '',
+              password: data.password || '1234',
+              createdAt: data.createdAt || new Date().toISOString(),
+              updatedAt: data.updatedAt || new Date().toISOString()
+            });
+          });
+
+          // Sort by createdAt
+          const sortedDepts = loadedDepts.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+          setDepartments(sortedDepts);
+
+          // If no active department selected, default select the first one
+          if (sortedDepts.length > 0 && !selectedDeptId) {
+            setSelectedDeptId(sortedDepts[0].id);
+          }
+
+          syncDone = true;
+          if (syncTimeout) {
+            clearTimeout(syncTimeout);
+            syncTimeout = null;
+          }
+          setIsOfflineMode(false);
+          setIsDbLoading(false);
+        }, (err) => {
+          console.warn('Departments subscription blocked:', err);
+          fallbackToOffline(err);
+        });
+
+        // 2. Snapshot for Members
+        unsubscribeMembers = onSnapshot(membersRef, (memberSnap) => {
+          const loadedMembers: Member[] = [];
+          memberSnap.forEach((docSnap) => {
+            const data = docSnap.data();
+            loadedMembers.push({
+              id: docSnap.id,
+              departmentId: data.departmentId || '',
+              name: data.name || '',
+              role: data.role || '부서원',
+              photoUrl: data.photoUrl || '',
+              selected: data.selected !== false,
+              createdAt: data.createdAt || new Date().toISOString(),
+              updatedAt: data.updatedAt || new Date().toISOString()
+            });
+          });
+
+          const sortedMembers = loadedMembers.sort((a, b) => {
+            const dateA = a.createdAt || '';
+            const dateB = b.createdAt || '';
+            return dateB.localeCompare(dateA);
+          });
+
+          setMembers(sortedMembers);
+        }, (err) => {
+          console.warn('Members subscription blocked:', err);
+        });
+
       } catch (err) {
-        console.error('Failed to initialize sync:', err);
-        setIsDbLoading(false);
+        if (syncTimeout) { clearTimeout(syncTimeout); syncTimeout = null; }
+        console.error('Failed to init sync:', err);
+        fallbackToOffline(err);
       }
     }
 
     initializeSync();
 
     return () => {
-      if (unsubscribe) {
-        unsubscribe();
-      }
+      if (unsubscribeDepts) unsubscribeDepts();
+      if (unsubscribeMembers) unsubscribeMembers();
     };
-  }, []);
+  }, [selectedDeptId]);
 
-  // Sync to localStorage as local offline backup
+  // Seed local storage with default if absolutely empty in offline mode
   useEffect(() => {
+    if (isOfflineMode && departments.length === 0) {
+      const deptTechId = 'dept-tech';
+      const deptStrategyId = 'dept-strategy';
+      const isoNow = new Date().toISOString();
+
+      const demoDepts: Department[] = [
+        { id: deptTechId, name: '기술 연구소', password: '1234', createdAt: isoNow, updatedAt: isoNow },
+        { id: deptStrategyId, name: '전략 기획본부', password: '1234', createdAt: isoNow, updatedAt: isoNow }
+      ];
+
+      const demoMembers: Member[] = DEFAULT_MEMBERS.map((m, idx) => {
+        const isTech = ['m1', 'm3', 'm5', 'm7', 'm11'].includes(m.id);
+        const targetDeptId = isTech ? deptTechId : deptStrategyId;
+        const mIso = new Date(Date.now() - idx * 1000).toISOString();
+        return {
+          ...m,
+          departmentId: targetDeptId,
+          selected: true,
+          createdAt: mIso,
+          updatedAt: mIso
+        };
+      });
+
+      setDepartments(demoDepts);
+      setMembers(demoMembers);
+      setSelectedDeptId(deptTechId);
+    }
+  }, [isOfflineMode]);
+
+  // Sync to localStorage
+  useEffect(() => {
+    if (departments.length > 0) {
+      localStorage.setItem('dept_departments', JSON.stringify(departments));
+    }
     if (members.length > 0) {
       localStorage.setItem('dept_members', JSON.stringify(members));
     }
-  }, [members]);
+  }, [departments, members]);
 
-  // Adjust group count boundary if member size changes
+  // Read filtered members belonging to active selected department
+  const filteredMembers = useMemo(() => {
+    if (!selectedDeptId) return [];
+    return members.filter(m => m.departmentId === selectedDeptId);
+  }, [members, selectedDeptId]);
+
+  // Adjust group count boundary if active members change
   useEffect(() => {
-    if (groupCount > Math.max(1, members.length)) {
-      setGroupCount(Math.max(1, members.length));
+    const activeSelectedCount = filteredMembers.filter(m => m.selected !== false).length;
+    if (groupCount > Math.max(1, activeSelectedCount)) {
+      setGroupCount(Math.max(1, activeSelectedCount));
     }
-  }, [members.length, groupCount]);
+  }, [filteredMembers, groupCount]);
 
-  // Toggle Single Member Selected State with live Cloud Sync
-  const handleToggleSelect = async (id: string) => {
-    const target = members.find((m) => m.id === id);
-    if (!target) return;
+  // Add Department (Local & Global)
+  const handleCreateDepartment = async () => {
+    if (!deptNameInput.trim()) return;
+    const passwordRaw = deptPasswordInput.trim() || '1234';
+
+    const newId = `dept-${Date.now()}`;
+    const isoNow = new Date().toISOString();
+
+    const newDept: Department = {
+      id: newId,
+      name: deptNameInput.trim(),
+      password: passwordRaw,
+      createdAt: isoNow,
+      updatedAt: isoNow
+    };
+
+    if (isOfflineMode) {
+      setDepartments(prev => [...prev, newDept]);
+      setSelectedDeptId(newId);
+      // Auto unlock newly created dept
+      setUnlockedDepts(prev => [...prev, newId]);
+      setIsDeptModalOpen(false);
+      setDeptNameInput('');
+      setDeptPasswordInput('');
+      return;
+    }
+
     try {
-      await updateDoc(doc(db, 'members', id), {
-        selected: target.selected === false,
-        updatedAt: new Date().toISOString(),
-      });
+      await withTimeout(setDoc(doc(db, 'departments', newId), {
+        name: newDept.name,
+        password: newDept.password,
+        createdAt: isoNow,
+        updatedAt: isoNow
+      }));
+      setUnlockedDepts(prev => [...prev, newId]);
+      setSelectedDeptId(newId);
+      setIsDeptModalOpen(false);
+      setDeptNameInput('');
+      setDeptPasswordInput('');
     } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, `members/${id}`);
+      console.warn('Firestore create dept failed. Cache mode active:', err);
+      setIsOfflineMode(true);
+      setDepartments(prev => [...prev, newDept]);
+      setSelectedDeptId(newId);
+      setUnlockedDepts(prev => [...prev, newId]);
+      setIsDeptModalOpen(false);
+      setDeptNameInput('');
+      setDeptPasswordInput('');
     }
   };
 
-  // Bulk Select / Deselect All with live Cloud Sync
+  // Edit Department Info (Requires validation)
+  const handleUpdateDepartment = async () => {
+    if (!editingDept || !deptNameInput.trim()) return;
+    const passwordRaw = deptPasswordInput.trim() || editingDept.password || '1234';
+
+    const targetId = editingDept.id;
+    const isoNow = new Date().toISOString();
+
+    const action = async () => {
+      if (isOfflineMode) {
+        setDepartments(prev => prev.map(d => d.id === targetId ? { ...d, name: deptNameInput.trim(), password: passwordRaw, updatedAt: isoNow } : d));
+        setIsDeptModalOpen(false);
+        setEditingDept(null);
+        setDeptNameInput('');
+        setDeptPasswordInput('');
+        return;
+      }
+
+      try {
+        await withTimeout(updateDoc(doc(db, 'departments', targetId), {
+          name: deptNameInput.trim(),
+          password: passwordRaw,
+          updatedAt: isoNow
+        }));
+        setIsDeptModalOpen(false);
+        setEditingDept(null);
+        setDeptNameInput('');
+        setDeptPasswordInput('');
+      } catch (err) {
+        console.warn('Firestore update dept failed:', err);
+        setIsOfflineMode(true);
+        setDepartments(prev => prev.map(d => d.id === targetId ? { ...d, name: deptNameInput.trim(), password: passwordRaw, updatedAt: isoNow } : d));
+        setIsDeptModalOpen(false);
+        setEditingDept(null);
+        setDeptNameInput('');
+        setDeptPasswordInput('');
+      }
+    };
+
+    checkPasswordAuth(targetId, action);
+  };
+
+  // Delete Department and all nested members
+  const handleDeleteDepartment = async (deptId: string) => {
+    if (departments.length <= 1) {
+      alert('최소 1개 이상의 부서가 존재해야 합니다.');
+      return;
+    }
+
+    if (!window.confirm('이 부서와 부서에 속한 모든 팀원 데이터가 영구 삭제됩니다. 정말 삭제하시겠습니까?')) {
+      return;
+    }
+
+    const action = async () => {
+      // Find dynamic next selector department
+      const remaining = departments.filter(d => d.id !== deptId);
+      const nextDeptId = remaining[0]?.id || null;
+
+      if (isOfflineMode) {
+        setDepartments(prev => prev.filter(d => d.id !== deptId));
+        setMembers(prev => prev.filter(m => m.departmentId !== deptId));
+        setSelectedDeptId(nextDeptId);
+        return;
+      }
+
+      try {
+        const batch = writeBatch(db);
+        // Delete department
+        batch.delete(doc(db, 'departments', deptId));
+        // Delete orphaned members
+        members.filter(m => m.departmentId === deptId).forEach(m => {
+          batch.delete(doc(db, 'members', m.id));
+        });
+
+        await withTimeout(batch.commit());
+        setSelectedDeptId(nextDeptId);
+      } catch (err) {
+        console.warn('Firestore delete dept failed:', err);
+        setIsOfflineMode(true);
+        setDepartments(prev => prev.filter(d => d.id !== deptId));
+        setMembers(prev => prev.filter(m => m.departmentId !== deptId));
+        setSelectedDeptId(nextDeptId);
+      }
+    };
+
+    checkPasswordAuth(deptId, action);
+  };
+
+  // Toggle Single Member Selected state (No Password Lock out needed for plain selecting to participate in Shuffle)
+  const handleToggleSelect = async (id: string) => {
+    const target = members.find((m) => m.id === id);
+    if (!target) return;
+
+    if (isOfflineMode) {
+      setMembers((prev) =>
+        prev.map((m) =>
+          m.id === id ? { ...m, selected: m.selected === false, updatedAt: new Date().toISOString() } : m
+        )
+      );
+      return;
+    }
+
+    try {
+      await withTimeout(updateDoc(doc(db, 'members', id), {
+        selected: target.selected === false,
+        updatedAt: new Date().toISOString(),
+      }));
+    } catch (err) {
+      console.warn('Firestore toggle select failed:', err);
+      setIsOfflineMode(true);
+      setMembers((prev) =>
+        prev.map((m) =>
+          m.id === id ? { ...m, selected: m.selected === false, updatedAt: new Date().toISOString() } : m
+        )
+      );
+    }
+  };
+
+  // Bulk Select / Deselect All for active department
   const handleToggleAll = async (select: boolean) => {
+    if (!selectedDeptId) return;
+
+    // We do not lock selection states with password since it is just utility config for Shuffle.
+    if (isOfflineMode) {
+      setMembers((prev) =>
+        prev.map((m) =>
+          m.departmentId === selectedDeptId ? { ...m, selected: select, updatedAt: new Date().toISOString() } : m
+        )
+      );
+      return;
+    }
+
     try {
       const batch = writeBatch(db);
-      members.forEach((m) => {
+      filteredMembers.forEach((m) => {
         batch.update(doc(db, 'members', m.id), {
           selected: select,
           updatedAt: new Date().toISOString(),
         });
       });
-      await batch.commit();
+      await withTimeout(batch.commit());
     } catch (err) {
-      handleFirestoreError(err, OperationType.WRITE, 'members');
+      console.warn('Firestore bulk select failed:', err);
+      setIsOfflineMode(true);
+      setMembers((prev) =>
+        prev.map((m) =>
+          m.departmentId === selectedDeptId ? { ...m, selected: select, updatedAt: new Date().toISOString() } : m
+        )
+      );
     }
   };
 
-  // Add Member with live Cloud Sync
+  // Add Member to selected department (Requires password verification check first)
   const handleAddMember = async (newMeta: Omit<Member, 'id'>) => {
-    const docId = `custom-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    const isoNow = new Date().toISOString();
-    try {
-      await setDoc(doc(db, 'members', docId), {
-        name: newMeta.name,
-        role: newMeta.role || '부서원',
-        photoUrl: newMeta.photoUrl,
-        selected: true,
-        createdAt: isoNow,
-        updatedAt: isoNow,
-      });
-    } catch (err) {
-      handleFirestoreError(err, OperationType.CREATE, `members/${docId}`);
+    if (!selectedDeptId) {
+      alert('등록할 부서를 먼저 신설하거나 선택하세요.');
+      return;
     }
+
+    const action = async () => {
+      const docId = `custom-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      const isoNow = new Date().toISOString();
+
+      if (isOfflineMode) {
+        const newMember: Member = {
+          ...newMeta,
+          id: docId,
+          departmentId: selectedDeptId,
+          selected: true,
+          createdAt: isoNow,
+          updatedAt: isoNow,
+        };
+        setMembers((prev) => [newMember, ...prev]);
+        setIsAddMemberModalOpen(false);
+        return;
+      }
+
+      try {
+        await withTimeout(setDoc(doc(db, 'members', docId), {
+          departmentId: selectedDeptId,
+          name: newMeta.name,
+          role: newMeta.role || '부서원',
+          photoUrl: newMeta.photoUrl,
+          selected: true,
+          createdAt: isoNow,
+          updatedAt: isoNow,
+        }));
+        setIsAddMemberModalOpen(false);
+      } catch (err) {
+        console.warn('Firestore add member failed:', err);
+        setIsOfflineMode(true);
+        const newMember: Member = {
+          ...newMeta,
+          id: docId,
+          departmentId: selectedDeptId,
+          selected: true,
+          createdAt: isoNow,
+          updatedAt: isoNow,
+        };
+        setMembers((prev) => [newMember, ...prev]);
+        setIsAddMemberModalOpen(false);
+      }
+    };
+
+    checkPasswordAuth(selectedDeptId, action);
   };
 
-  // Delete Member with live Cloud Sync
+  // Delete Member (Requires password verification check first)
   const handleDeleteMember = async (id: string) => {
-    try {
-      await deleteDoc(doc(db, 'members', id));
-    } catch (err) {
-      handleFirestoreError(err, OperationType.DELETE, `members/${id}`);
-    }
+    if (!selectedDeptId) return;
+
+    const action = async () => {
+      if (isOfflineMode) {
+        setMembers((prev) => prev.filter((m) => m.id !== id));
+        return;
+      }
+
+      try {
+        await withTimeout(deleteDoc(doc(db, 'members', id)));
+      } catch (err) {
+        console.warn('Firestore delete failed:', err);
+        setIsOfflineMode(true);
+        setMembers((prev) => prev.filter((m) => m.id !== id));
+      }
+    };
+
+    checkPasswordAuth(selectedDeptId, action);
   };
 
-  // Update Member with live Cloud Sync
+  // Update Member (Requires password verification check first)
   const handleUpdateMember = async (id: string, updated: Omit<Member, 'id' | 'selected'>) => {
-    try {
-      await updateDoc(doc(db, 'members', id), {
-        name: updated.name,
-        role: updated.role || '부서원',
-        photoUrl: updated.photoUrl,
-        updatedAt: new Date().toISOString(),
-      });
-    } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, `members/${id}`);
-    }
+    if (!selectedDeptId) return;
+
+    const action = async () => {
+      if (isOfflineMode) {
+        setMembers((prev) =>
+          prev.map((m) => (m.id === id ? { ...m, ...updated, updatedAt: new Date().toISOString() } : m))
+        );
+        setIsAddMemberModalOpen(false);
+        return;
+      }
+
+      try {
+        await withTimeout(updateDoc(doc(db, 'members', id), {
+          name: updated.name,
+          role: updated.role || '부서원',
+          photoUrl: updated.photoUrl,
+          updatedAt: new Date().toISOString(),
+        }));
+        setIsAddMemberModalOpen(false);
+      } catch (err) {
+        console.warn('Firestore update failed:', err);
+        setIsOfflineMode(true);
+        setMembers((prev) =>
+          prev.map((m) => (m.id === id ? { ...m, ...updated, updatedAt: new Date().toISOString() } : m))
+        );
+        setIsAddMemberModalOpen(false);
+      }
+    };
+
+    checkPasswordAuth(selectedDeptId, action);
   };
 
-  // Reset to default roster list in Cloud
+  // Reset to default roster list in active department (Requires password verification cheek)
   const handleResetToDefault = async () => {
-    if (window.confirm('부서원 명단을 처음에 제공된 기본 명단으로 초기화하시겠습니까? (현재 데이터는 덮어씌워지며, 연동된 모든 기기가 실시간 동기화됩니다)')) {
+    if (!selectedDeptId) return;
+
+    const action = async () => {
+      if (!window.confirm('현재 부서원 명단이 기본 명단으로 덮어써집니다. 계속하시겠습니까?')) {
+        return;
+      }
+
+      // Prepare dev team vs strategy team default mapping
+      const baseMembers = DEFAULT_MEMBERS.filter(m => {
+        const isTech = ['m1', 'm3', 'm5', 'm7', 'm11'].includes(m.id);
+        const isTargetTech = selectedDeptId === 'dept-tech';
+        return isTech === isTargetTech;
+      });
+
+      if (isOfflineMode) {
+        const resetData = baseMembers.map((m, idx) => ({
+          ...m,
+          departmentId: selectedDeptId,
+          selected: true,
+          createdAt: new Date(Date.now() - idx * 1000).toISOString(),
+          updatedAt: new Date().toISOString(),
+        }));
+        setMembers(prev => [
+          ...prev.filter(m => m.departmentId !== selectedDeptId),
+          ...resetData
+        ]);
+        setGroups([]);
+        alert('이 브라우저 로컬 캐시 명단이 성공적으로 초기화되었습니다.');
+        return;
+      }
+
       try {
         const batch = writeBatch(db);
         
-        // Delete all current members first
-        members.forEach((m) => {
+        // Delete only current department members
+        filteredMembers.forEach((m) => {
           batch.delete(doc(db, 'members', m.id));
         });
         
-        // Repopulate with default members
-        DEFAULT_MEMBERS.forEach((m, idx) => {
-          const mId = m.id;
+        // Repopulate with allocated defaults
+        baseMembers.forEach((m, idx) => {
+          const mId = `custom-${selectedDeptId}-${m.id}-${Date.now()}`;
           const isoNow = new Date(Date.now() - idx * 1000).toISOString();
           batch.set(doc(db, 'members', mId), {
+            departmentId: selectedDeptId,
             name: m.name,
             role: m.role || '부서원',
             photoUrl: m.photoUrl,
@@ -312,44 +828,67 @@ export default function App() {
           });
         });
 
-        await batch.commit();
+        await withTimeout(batch.commit());
         setGroups([]);
-        alert('부서원 목록이 원격 데이터베이스에 초기화되었습니다!');
+        alert('부서원 명단이 원격 클라우드에 성공적으로 리셋되었습니다!');
       } catch (err) {
-        handleFirestoreError(err, OperationType.WRITE, 'members');
+        console.warn('Firestore reset failed:', err);
+        setIsOfflineMode(true);
+        alert('네트워크 또는 권한 비활성화로 로컬 수준에서만 복구 처리되었습니다.');
       }
-    }
+    };
+
+    checkPasswordAuth(selectedDeptId, action);
   };
 
-  // Clear all members in Cloud
+  // Clear all members in active department (Requires password verification cheek)
   const handleClearAll = async () => {
-    if (window.confirm('모든 부서원 명단을 영구적으로 삭제하시겠습니까? (연동된 모든 기기가 동시에 비워집니다)')) {
+    if (!selectedDeptId) return;
+
+    const action = async () => {
+      if (!window.confirm('현재 부서의 모든 부서원이 영구적으로 삭제됩니다. 정말 삭제하시겠습니까?')) {
+        return;
+      }
+
+      if (isOfflineMode) {
+        setMembers((prev) => prev.filter((m) => m.departmentId !== selectedDeptId));
+        setGroups([]);
+        return;
+      }
+
       try {
         const batch = writeBatch(db);
-        members.forEach((m) => {
+        filteredMembers.forEach((m) => {
           batch.delete(doc(db, 'members', m.id));
         });
-        await batch.commit();
+        await withTimeout(batch.commit());
         setGroups([]);
       } catch (err) {
-        handleFirestoreError(err, OperationType.WRITE, 'members');
+        console.warn('Firestore clear all failed:', err);
+        setIsOfflineMode(true);
+        setMembers((prev) => prev.filter((m) => m.departmentId !== selectedDeptId));
+        setGroups([]);
       }
-    }
+    };
+
+    checkPasswordAuth(selectedDeptId, action);
   };
 
-  // Export current list as a JSON file
+  // Export current active department list
   const handleExportBackup = () => {
-    if (members.length === 0) {
+    if (filteredMembers.length === 0) {
       alert('내보낼 부서원 데이터가 없습니다.');
       return;
     }
     try {
-      const dataStr = JSON.stringify(members, null, 2);
+      const dataStr = JSON.stringify(filteredMembers, null, 2);
       const blob = new Blob([dataStr], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `teamshuffle_members_${new Date().toISOString().split('T')[0]}.json`;
+      
+      const deptName = departments.find(d => d.id === selectedDeptId)?.name || 'department';
+      link.download = `teamshuffle_${deptName}_${new Date().toISOString().split('T')[0]}.json`;
       link.click();
       URL.revokeObjectURL(url);
     } catch (e) {
@@ -357,63 +896,92 @@ export default function App() {
     }
   };
 
-  // Import backup list from a JSON file with live Cloud Sync
+  // Import backup list into active selected department (Requires password verification cheek)
   const handleImportBackup = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file) return;
+    if (!file || !selectedDeptId) return;
 
-    const reader = new FileReader();
-    reader.onload = async (event) => {
-      try {
-        const result = event.target?.result as string;
-        const parsed = JSON.parse(result);
-        if (Array.isArray(parsed)) {
-          const isValid = parsed.every(p => typeof p === 'object' && p !== null && 'name' in p);
-          if (isValid) {
-            const batch = writeBatch(db);
-            
-            // Delete current
-            members.forEach((m) => {
-              batch.delete(doc(db, 'members', m.id));
-            });
+    const action = async () => {
+      const reader = new FileReader();
+      reader.onload = async (event) => {
+        try {
+          const result = event.target?.result as string;
+          const parsed = JSON.parse(result);
+          if (Array.isArray(parsed)) {
+            const isValid = parsed.every(p => typeof p === 'object' && p !== null && 'name' in p);
+            if (isValid) {
+              if (isOfflineMode) {
+                const updatedList = parsed.map((m, idx) => ({
+                  ...m,
+                  id: m.id || `custom-${selectedDeptId}-${Date.now()}-${idx}`,
+                  departmentId: selectedDeptId,
+                  createdAt: m.createdAt || new Date().toISOString(),
+                  updatedAt: new Date().toISOString(),
+                }));
 
-            // Write loaded ones
-            parsed.forEach((m, idx) => {
-              const mId = m.id || `custom-${Date.now()}-${idx}-${Math.random().toString(36).substr(2, 5)}`;
-              const isoNow = m.createdAt || new Date(Date.now() - idx * 1000).toISOString();
-              batch.set(doc(db, 'members', mId), {
-                name: m.name,
-                role: m.role || '부서원',
-                photoUrl: m.photoUrl || 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&h=150&fit=crop&crop=faces&q=80',
-                selected: m.selected !== false,
-                createdAt: isoNow,
-                updatedAt: m.updatedAt || isoNow,
-              });
-            });
+                setMembers(prev => [
+                  ...prev.filter(m => m.departmentId !== selectedDeptId),
+                  ...updatedList
+                ]);
+                alert(`성공적으로 ${parsed.length}명의 부서원을 불러왔습니다!`);
+                setGroups([]);
+                return;
+              }
 
-            await batch.commit();
-            alert(`성공적으로 ${parsed.length}명의 부서원을 불러와 원격 클라우드에 실시간 저장을 완료했습니다!`);
-            setGroups([]);
+              try {
+                const batch = writeBatch(db);
+                
+                // Delete active
+                filteredMembers.forEach((m) => {
+                  batch.delete(doc(db, 'members', m.id));
+                });
+
+                // Write loaded ones
+                parsed.forEach((m, idx) => {
+                  const mId = m.id || `custom-${selectedDeptId}-${Date.now()}-${idx}-${Math.random().toString(36).substr(2, 5)}`;
+                  const isoNow = m.createdAt || new Date(Date.now() - idx * 1000).toISOString();
+                  batch.set(doc(db, 'members', mId), {
+                    departmentId: selectedDeptId,
+                    name: m.name,
+                    role: m.role || '부서원',
+                    photoUrl: m.photoUrl || 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&h=150&fit=crop&crop=faces&q=80',
+                    selected: m.selected !== false,
+                    createdAt: isoNow,
+                    updatedAt: m.updatedAt || isoNow,
+                  });
+                });
+
+                await withTimeout(batch.commit());
+                alert(`성공적으로 ${parsed.length}명의 부서원을 동기화하였습니다!`);
+                setGroups([]);
+              } catch (err) {
+                console.warn('Firestore import backup failed:', err);
+                setIsOfflineMode(true);
+                alert('네트워크 유실로 임시 로컬 캐시에 백업 복원되었습니다.');
+              }
+            } else {
+              alert('유효한 백업 파일 양식이 아닙니다. 부서원 목록이 정확히 들어있어야 합니다.');
+            }
           } else {
-            alert('유효한 백업 파일 양식이 아닙니다. 부서원 목록이 정확히 들어있어야 합니다.');
+            alert('부서원 배열 형식이 아니기 때문에 복원하지 못했습니다.');
           }
-        } else {
-          alert('부서원 배열 형식이 아니기 때문에 복원하지 못했습니다.');
+        } catch (err) {
+          alert('백업 데이터를 불러오는 중 오류가 발생했습니다. 올바른 파일인지 확인해 주세요.');
         }
-      } catch (err) {
-        alert('백업 데이터를 불러오는 중 오류가 발생했습니다. 올바른 파일인지 확인해 주세요.');
-      }
+      };
+      reader.readAsText(file);
+      e.target.value = '';
     };
-    reader.readAsText(file);
-    e.target.value = ''; // Reset input
+
+    checkPasswordAuth(selectedDeptId, action);
   };
 
-  // Shuffle & Divide algorithm with step animations (Filtering out deselected members)
+  // Shuffle & Divide algorithm with step animations (Using filteredMembers instead of global members)
   const triggerShuffle = () => {
-    const activeMembers = members.filter((m) => m.selected !== false);
+    const activeMembers = filteredMembers.filter((m) => m.selected !== false);
 
-    if (members.length === 0) {
-      alert('조를 편성할 부서원이 없습니다. 부서원을 추가해주세요!');
+    if (filteredMembers.length === 0) {
+      alert('조를 편성할 부서원이 없습니다. 부서원을 등록하거나 부서를 생성해주세요!');
       return;
     }
     if (activeMembers.length === 0) {
@@ -428,15 +996,13 @@ export default function App() {
     const actualGroupCount = Math.min(groupCount, activeMembers.length);
 
     setIsShuffling(true);
-    setActiveStep(2); // Automatically swap to Step 2 window when executing draft
+    setActiveStep(2);
     setShufflePhase('preparing');
     
-    // Cycle and animate cards of active members
     let counter = 0;
     const intervalTime = 80;
-    const totalFlashingTime = 1600; // 1.6 seconds of intense flashing
+    const totalFlashingTime = 1600;
     
-    // Preparation phase lasts 400ms
     setTimeout(() => {
       setShufflePhase('scrambling');
       
@@ -449,7 +1015,6 @@ export default function App() {
           clearInterval(flasher);
           setShufflePhase('positioning');
           
-          // Allocate groups using selected activeMembers only
           setTimeout(() => {
             const shuffled = shuffleArray<Member>(activeMembers);
             const generatedGroups: Group[] = Array.from({ length: actualGroupCount }, (_, i) => ({
@@ -465,7 +1030,6 @@ export default function App() {
             setGroups(generatedGroups);
             setShufflePhase('completed');
             
-            // Cleanup animation
             setTimeout(() => {
               setIsShuffling(false);
               setShufflePhase('idle');
@@ -477,14 +1041,13 @@ export default function App() {
     }, 450);
   };
 
-  // Inline group title editing
+  // Rename a dynamic team group
   const handleRenameGroup = (groupId: string, newName: string) => {
     setGroups((prev) =>
       prev.map((g) => (g.id === groupId ? { ...g, name: newName } : g))
     );
   };
 
-  // Copy Results as Text to Clipboard
   const handleCopyResults = () => {
     if (groups.length === 0) return;
 
@@ -556,41 +1119,175 @@ export default function App() {
       <div className="flex-1 overflow-hidden relative">
         <AnimatePresence mode="wait">
           {activeStep === 1 ? (
-            /* STEP 1 Screen window (Roster Data Setup) */
+            /* STEP 1 Screen window (Department List and Roster Data Setup) */
             <motion.div
               key="step1-window"
               initial={{ opacity: 0, x: -15 }}
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: 15 }}
               transition={{ duration: 0.25 }}
-              className="absolute inset-0 flex flex-col p-6 md:p-8 gap-6 overflow-y-auto"
+              className="absolute inset-0 flex flex-col p-4 md:p-6 lg:p-8 gap-4 overflow-y-auto"
             >
+              {/* Simple Department Creator Row */}
+              <div className="max-w-6xl mx-auto w-full flex justify-end shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingDept(null);
+                    setDeptNameInput('');
+                    setDeptPasswordInput('');
+                    setIsDeptModalOpen(true);
+                  }}
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-xs rounded-xl flex items-center justify-center gap-1.5 transition-all shadow-md shrink-0 hover:scale-[1.02]"
+                >
+                  <Plus className="w-4 h-4 text-emerald-300" />
+                  새 부서
+                </button>
+              </div>
+
+              {/* Grid-based interactive department switcher card */}
+              <div className="max-w-6xl mx-auto w-full bg-white border border-slate-200/90 rounded-3xl p-4 sm:p-5 shadow-sm shrink-0">
+                <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-3.5">
+                  <span className="text-[11px] text-slate-400 font-extrabold flex items-center gap-1 uppercase select-none">
+                    <Settings className="w-3.5 h-3.5 text-indigo-500" /> Active Department Select
+                  </span>
+                  <span className="text-[10px] text-slate-350 select-none">부서 클릭 시 즉시 활성화됩니다</span>
+                </div>
+
+                {/* Horizontal / Grid-friendly dynamic department list with lock/unlock overlays */}
+                <div className="flex flex-wrap gap-2">
+                  {departments.map((dept) => {
+                    const isActive = selectedDeptId === dept.id;
+                    const isUnlocked = unlockedDepts.includes(dept.id);
+                    const memberCount = members.filter(m => m.departmentId === dept.id).length;
+
+                    return (
+                      <div
+                        key={dept.id}
+                        onClick={() => setSelectedDeptId(dept.id)}
+                        className={`px-3.5 py-3 rounded-2xl border transition-all cursor-pointer flex items-center justify-between gap-3 min-w-[140px] md:min-w-[170px] select-none hover:shadow-xs relative ${
+                          isActive
+                            ? 'bg-indigo-50/70 border-indigo-200 shadow-sm'
+                            : 'bg-slate-50/60 border-slate-200/80 hover:bg-slate-100/50 hover:border-slate-300'
+                        }`}
+                      >
+                        <div className="min-w-0 flex-1 space-y-0.5">
+                          <h4 className={`text-xs font-black truncate ${isActive ? 'text-indigo-800' : 'text-slate-700'}`}>
+                            {dept.name}
+                          </h4>
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[9px] text-slate-400 font-bold">인원: {memberCount}명</span>
+                            <span className="text-slate-300 text-[9px]">•</span>
+                            <span className={`text-[9px] font-bold flex items-center gap-0.5 ${isUnlocked ? 'text-emerald-600' : 'text-slate-400'}`}>
+                              {isUnlocked ? <Unlock className="w-2.5 h-2.5" /> : <Lock className="w-2.5 h-2.5" />}
+                              {isUnlocked ? '편집인증' : '수정잠금'}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Inline actions inside selected department cell */}
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setEditingDept(dept);
+                              setDeptNameInput(dept.name);
+                              setDeptPasswordInput(dept.password);
+                              setIsDeptModalOpen(true);
+                            }}
+                            className="p-1 rounded bg-white hover:bg-slate-100 border border-slate-200 text-slate-400 hover:text-indigo-600 transition-colors shadow-2xs"
+                            title="부서 정보 및 권한 암호 수정"
+                          >
+                            <Edit3 className="w-3 h-3" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeleteDepartment(dept.id);
+                            }}
+                            className="p-1 rounded bg-white hover:bg-red-50 border border-slate-200 text-slate-400 hover:text-red-500 transition-colors shadow-2xs"
+                            title="이 부서 영구 삭제"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
               {/* Full Width Integrated List & Controls Panel */}
               <div className="flex-1 max-w-6xl mx-auto w-full bg-white border border-slate-200 rounded-3xl shadow-sm p-6 sm:p-8 flex flex-col min-h-[400px]">
                 {/* Minimized Panel Header: 1-line layout */}
                 <div className="flex flex-row items-center justify-between gap-3 pb-3 border-b border-slate-150 shrink-0 select-none">
                   <div className="flex items-center gap-2.5 min-w-0">
                     <h3 className="text-xs sm:text-sm font-black text-slate-800 flex items-center gap-1.5 shrink-0 select-none">
-                      부서원 명단
+                      {departments.find(d => d.id === selectedDeptId)?.name || '선택된 부서'} 명단
                       <span className="text-[10px] bg-slate-100 text-slate-500 font-bold px-1.5 py-0.5 rounded-md">
-                        {members.length}명
+                        {filteredMembers.length}명
                       </span>
                     </h3>
-                    <div className="hidden sm:flex items-center gap-2 text-[10px] text-slate-450 font-semibold select-none shrink-0">
-                      <span className="text-indigo-600">참가 {members.filter(m => m.selected !== false).length}명</span>
+                    <div className="hidden sm:flex items-center gap-2 text-[10px] text-slate-400 font-semibold select-none shrink-0">
+                      <span className="text-indigo-600">참가 {filteredMembers.filter(m => m.selected !== false).length}명</span>
                       <span className="text-slate-300">|</span>
-                      <span>제외 {members.filter(m => m.selected === false).length}명</span>
+                      <span>제외 {filteredMembers.filter(m => m.selected === false).length}명</span>
                       <span className="text-slate-300">|</span>
                       {isDbLoading ? (
-                        <span className="text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded flex items-center gap-1 font-bold">
-                          <RefreshCw className="w-3 h-3 animate-spin text-amber-500" />
-                          실시간 클라우드 연결 중...
-                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded flex items-center gap-1.5 font-bold">
+                            <RefreshCw className="w-3 h-3 animate-spin text-amber-500" />
+                            실시간 클라우드 연결 중...
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              localStorage.setItem('force_offline_mode', 'true');
+                              setIsOfflineMode(true);
+                              setIsDbLoading(false);
+                            }}
+                            className="bg-slate-250 hover:bg-slate-200 text-slate-705 px-1.5 py-0.5 rounded text-[9px] font-black cursor-pointer transition-colors"
+                            title="데이터베이스 실시간 연결을 건너뛰고 브라우저 캐시 전용 오프라인 모드로 즉시 시작합니다."
+                          >
+                            오프라인 강제 전환
+                          </button>
+                        </div>
+                      ) : isOfflineMode ? (
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded flex items-center gap-1.5 font-bold">
+                            <span className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-pulse"></span>
+                            로컬 오프라인 모드
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              localStorage.removeItem('force_offline_mode');
+                              window.location.reload();
+                            }}
+                            className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded text-[9px] font-black cursor-pointer transition-colors"
+                          >
+                            클라우드 연결 시도
+                          </button>
+                        </div>
                       ) : (
-                        <span className="text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded flex items-center gap-1 font-bold">
-                          <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></span>
-                          실시간 기기 동기화 완료
-                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded flex items-center gap-1.5 font-bold">
+                            <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></span>
+                            실시간 클라우드 동기화 완료
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              localStorage.setItem('force_offline_mode', 'true');
+                              window.location.reload();
+                            }}
+                            className="bg-slate-100 hover:bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-[9px] font-black cursor-pointer transition-colors"
+                          >
+                            오프라인 전환
+                          </button>
+                        </div>
                       )}
                     </div>
                   </div>
@@ -616,9 +1313,9 @@ export default function App() {
                 {/* Highly compact Roster database Grid view with maximized density */}
                 <div className="flex-1 overflow-y-auto py-2.5 minimal-scrollbar mt-1">
                   <AnimatePresence>
-                    {members.length > 0 ? (
+                    {filteredMembers.length > 0 ? (
                       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-2">
-                        {members.map((member) => (
+                        {filteredMembers.map((member) => (
                           <MemberItemCard
                             key={member.id}
                             member={member}
@@ -634,8 +1331,8 @@ export default function App() {
                     ) : (
                       <div className="text-center py-16 text-slate-400">
                         <Users className="w-9 h-9 mx-auto opacity-30 mb-2 text-indigo-500" />
-                        <p className="text-xs font-bold text-slate-500">등록된 부서원이 없습니다.</p>
-                        <p className="text-[10px] text-slate-400 mt-1">아래의 등록 버튼을 클릭해 추가해 주세요.</p>
+                        <p className="text-xs font-bold text-slate-500">이 부서에 등록된 부서원이 없습니다.</p>
+                        <p className="text-[10px] text-slate-400 mt-1">아래의 등록 버튼을 클릭하여 소유자 비밀번호 검증 후 추가해주세요.</p>
                       </div>
                     )}
                   </AnimatePresence>
@@ -661,7 +1358,7 @@ export default function App() {
                     className="px-3.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white font-extrabold text-[11px] rounded-lg shadow-sm flex items-center gap-1 cursor-pointer transition-all hover:scale-[1.02]"
                   >
                     <Plus className="w-3.5 h-3.5 text-emerald-400" />
-                    <span>등록</span>
+                    <span>팀원 등록</span>
                   </button>
                   <button
                     onClick={handleResetToDefault}
@@ -669,7 +1366,7 @@ export default function App() {
                     title="기본 데모 부서원 목록으로 되돌려 놓습니다."
                   >
                     <RotateCcw className="w-3 h-3 text-slate-500" />
-                    <span>초기화</span>
+                    <span>부서인원 리셋</span>
                   </button>
                   <button
                     onClick={handleClearAll}
@@ -677,7 +1374,7 @@ export default function App() {
                     title="모든 인원을 비웁니다."
                   >
                     <Trash2 className="w-3 h-3 text-red-500" />
-                    <span>전체삭제</span>
+                    <span>부서원 전체비우기</span>
                   </button>
 
                   <span className="w-px h-4 bg-slate-200 hidden sm:inline" />
@@ -709,39 +1406,55 @@ export default function App() {
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: -15 }}
               transition={{ duration: 0.25 }}
-              className="absolute inset-0 flex flex-col p-6 md:p-8 gap-5 overflow-y-auto"
+              className="absolute inset-0 flex flex-col p-4 md:p-6 lg:p-8 gap-5 overflow-y-auto"
             >
               {/* Compact Minimized Top Control Card */}
-              <div className="bg-white border border-slate-200 rounded-2xl p-2.5 px-4 shadow-sm flex flex-row items-center justify-between gap-3 shrink-0 transition-all">
+              <div className="bg-white border border-slate-200 rounded-2xl p-3 px-4 shadow-sm flex flex-col md:flex-row items-center justify-between gap-4 shrink-0 transition-all">
                 {/* Control Left: Single-line Navigation & small title */}
-                <div className="flex items-center gap-2.5 truncate">
+                <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto">
                   <button
                     onClick={() => setActiveStep(1)}
                     className="inline-flex items-center gap-1 text-[11px] text-indigo-600 hover:text-indigo-800 font-bold transition-all cursor-pointer hover:underline shrink-0"
-                    title="부서원 명단 편집하러 돌아가기"
+                    title="부서 데이터 정보 설정 창으로 돌라갑니다."
                   >
                     <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15 19l-7-7 7-7"></path>
                     </svg>
-                    <span>명단 편집</span>
+                    <span>등록</span>
                   </button>
                   <span className="text-slate-300 text-xs shrink-0">|</span>
-                  <span className="text-xs font-bold text-slate-800 tracking-tight shrink-0">조 편성 및 추첨</span>
-                  <span className="hidden sm:inline text-[10px] font-bold text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full shrink-0">
-                    후보 {members.filter(m => m.selected !== false).length}명
+                  <span className="text-xs font-bold text-slate-800 tracking-tight shrink-0">추첨 부서 지정:</span>
+                  
+                  {/* Department Picker dropdown for Draw Shuffle */}
+                  <select
+                    value={selectedDeptId || ''}
+                    onChange={(e) => {
+                      setSelectedDeptId(e.target.value || null);
+                      setGroups([]); // Clear previous target draft values
+                    }}
+                    className="bg-slate-50 border border-slate-200 text-xs font-extrabold px-2.5 py-1.5 rounded-lg text-slate-700 focus:outline-none focus:ring-1 focus:ring-indigo-500 shrink-0 cursor-pointer"
+                  >
+                    {departments.map((d) => (
+                      <option key={d.id} value={d.id}>
+                        {d.name} ({members.filter(m => m.departmentId === d.id).length}명)
+                      </option>
+                    ))}
+                  </select>
+
+                  <span className="hidden sm:inline text-[10px] font-bold text-slate-400 bg-slate-100 px-2.5 py-1 rounded-full shrink-0">
+                    전체 {filteredMembers.length}명 / 참여예정 {filteredMembers.filter(m => m.selected !== false).length}명
                   </span>
                 </div>
 
                 {/* Control Right: Small input configuration & Instant shuffle button horizontally aligned */}
-                <div className="flex items-center gap-3 shrink-0">
-                  {/* Compact small group picker - PC에서는 크게, 모바일에서는 적절하게 */}
-                  <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl p-1 px-3 md:p-1.5 md:px-5">
-                    <span className="text-[11px] md:text-sm font-black text-slate-700 select-none">조 개수:</span>
+                <div className="flex flex-wrap items-center gap-3 shrink-0 justify-end w-full md:w-auto">
+                  <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl p-1 px-3 md:p-1.5 md:px-4">
+                    <span className="text-[11px] md:text-xs font-black text-slate-700 select-none">조 개수:</span>
                     <button
                       type="button"
                       onClick={() => setGroupCount((prev) => Math.max(1, prev - 1))}
                       disabled={groupCount <= 1}
-                      className="w-6 h-6 md:w-9 md:h-9 bg-white hover:bg-slate-100 disabled:opacity-45 rounded-lg flex items-center justify-center font-extrabold text-xs md:text-base text-slate-600 border border-slate-200 transition-all cursor-pointer shadow-sm active:scale-95 shrink-0"
+                      className="w-6 h-6 md:w-7 md:h-7 bg-white hover:bg-slate-100 disabled:opacity-45 rounded-lg flex items-center justify-center font-extrabold text-xs text-slate-600 border border-slate-200 transition-all cursor-pointer shadow-sm active:scale-95 shrink-0"
                     >
                       -
                     </button>
@@ -749,34 +1462,33 @@ export default function App() {
                       id="sidebar-group-input"
                       type="number"
                       min="1"
-                      max={Math.max(1, members.filter(m => m.selected !== false).length)}
+                      max={Math.max(1, filteredMembers.filter(m => m.selected !== false).length)}
                       value={groupCount}
                       onChange={(e) => {
                         const val = parseInt(e.target.value, 10);
-                        const activeCount = members.filter(m => m.selected !== false).length;
+                        const activeCount = filteredMembers.filter(m => m.selected !== false).length;
                         if (!isNaN(val)) {
                           setGroupCount(Math.min(Math.max(1, activeCount || 1), Math.max(1, val)));
                         } else {
-                          // allow blank typing temporarily
                           (e.target as any).value = '';
                         }
                       }}
                       onBlur={(e) => {
                         const val = parseInt(e.target.value, 10);
-                        const activeCount = members.filter(m => m.selected !== false).length;
+                        const activeCount = filteredMembers.filter(m => m.selected !== false).length;
                         if (isNaN(val) || val < 1) {
                           setGroupCount(3);
                         } else {
                           setGroupCount(Math.min(Math.max(1, activeCount || 1), val));
                         }
                       }}
-                      className="w-10 sm:w-16 md:w-28 h-6 md:h-9 text-center font-black text-xs md:text-base text-indigo-700 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all select-all bubble-input"
+                      className="w-10 sm:w-16 h-6 md:h-7 text-center font-black text-xs text-indigo-750 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 transition-all select-all bubble-input"
                     />
                     <button
                       type="button"
-                      onClick={() => setGroupCount((prev) => Math.min(members.filter(m => m.selected !== false).length, prev + 1))}
-                      disabled={groupCount >= members.filter(m => m.selected !== false).length}
-                      className="w-6 h-6 md:w-9 md:h-9 bg-white hover:bg-slate-100 disabled:opacity-45 rounded-lg flex items-center justify-center font-extrabold text-xs md:text-base text-slate-600 border border-slate-200 transition-all cursor-pointer shadow-sm active:scale-95 shrink-0"
+                      onClick={() => setGroupCount((prev) => Math.min(filteredMembers.filter(m => m.selected !== false).length, prev + 1))}
+                      disabled={groupCount >= filteredMembers.filter(m => m.selected !== false).length}
+                      className="w-6 h-6 md:w-7 md:h-7 bg-white hover:bg-slate-100 disabled:opacity-45 rounded-lg flex items-center justify-center font-extrabold text-xs text-slate-600 border border-slate-200 transition-all cursor-pointer shadow-sm active:scale-95 shrink-0"
                     >
                       +
                     </button>
@@ -786,11 +1498,11 @@ export default function App() {
                   <button
                     id="sidebar-action-shuffle"
                     onClick={triggerShuffle}
-                    disabled={members.filter(m => m.selected !== false).length === 0 || isShuffling}
-                    className="h-7.5 px-3 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white rounded-lg font-bold text-[11px] shadow-sm flex items-center gap-1.5 transition-all cursor-pointer"
+                    disabled={filteredMembers.filter(m => m.selected !== false).length === 0 || isShuffling}
+                    className="h-8.5 px-4 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white rounded-lg font-bold text-xs shadow-sm flex items-center gap-1.5 transition-all cursor-pointer hover:scale-[1.02]"
                   >
-                    <Shuffle className="w-3 h-3" />
-                    <span>추첨 실행</span>
+                    <Shuffle className="w-3.5 h-3.5 text-emerald-300 animate-spin" style={{ animationDuration: '6s' }} />
+                    <span>셔플 가동</span>
                   </button>
                 </div>
               </div>
@@ -799,8 +1511,11 @@ export default function App() {
               <div id="main-results-board" className="flex-1 flex flex-col gap-4">
                 <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-1 border-b border-slate-100">
                   <div>
-                    <h3 className="text-base font-bold text-slate-800 flex items-center gap-2">
-                      실시간 편성 배치도
+                    <h3 className="text-sm font-black text-slate-800 flex items-center gap-2 select-none">
+                      실시간 셔플 결과표 
+                      <span className="text-[10px] bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-md font-bold">
+                        {departments.find(d => d.id === selectedDeptId)?.name || '현 부서'}
+                      </span>
                       <span className="text-slate-400 font-normal text-xs">
                         {groups.length > 0 ? `— 총 ${groups.length}개 조 배정 완료` : '— 미편성 상태'}
                       </span>
@@ -845,7 +1560,7 @@ export default function App() {
                         ) : (
                           <>
                             <Share2 className="w-3.5 h-3.5" />
-                            명단 텍스트 공유
+                            결과 텍스트 복사
                           </>
                         )}
                       </button>
@@ -919,8 +1634,8 @@ export default function App() {
                         <Layers className="w-7 h-7" />
                       </div>
                       <h3 className="text-lg font-bold text-slate-800 mb-1">편성된 조 목록이 비어있습니다</h3>
-                      <p className="text-xs text-slate-400 max-w-sm mb-6 leading-relaxed">
-                        부서원 명단 데이터 준비가 끝나셨다면, 상단 제어 바에서 조 개수를 선택하시고 &lsquo;조 편성 무작위 추첨 실행&rsquo;을 눌러 결과를 바로 확인해보세요!
+                      <p className="text-xs text-slate-400 max-w-sm mb-6 leading-relaxed select-none">
+                        추첨 후보 인원 셋업이 끝나셨다면, 상단 제어 바에서 조 개수를 선택하시고 &lsquo;셔플 가동&rsquo;을 눌러 결과를 확인해보세요!
                       </p>
                       
                       <div className="flex gap-3">
@@ -932,7 +1647,7 @@ export default function App() {
                         </button>
                         <button
                           onClick={triggerShuffle}
-                          disabled={members.filter(m => m.selected !== false).length === 0}
+                          disabled={filteredMembers.filter(m => m.selected !== false).length === 0}
                           className="px-6 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 text-white font-bold text-xs rounded-xl shadow-md cursor-pointer transition-all"
                         >
                           무작위 추첨 시작하기 🎲
@@ -951,7 +1666,7 @@ export default function App() {
       <footer id="footer-system" className="h-10 bg-slate-800 text-slate-400 px-8 flex items-center justify-between text-[10px] font-semibold shrink-0 z-10 uppercase tracking-wider select-none">
         <div>SYSTEM STATUS: READY TO SHUFFLE & EXPORT</div>
         <div className="flex gap-4 tracking-normal">
-          <span>워크숍 분배 매니저 v4.5</span>
+          <span>워크숍 분배 매니저 v4.6</span>
           <span className="hidden sm:inline text-slate-600">|</span>
           <span className="hidden sm:inline">ALGORITHM: RANDOM BALANCER CO-OP</span>
         </div>
@@ -1076,11 +1791,9 @@ export default function App() {
                 initialMember={editingMember}
                 onAddMember={(newMeta) => {
                   handleAddMember(newMeta);
-                  setIsAddMemberModalOpen(false);
                 }}
                 onSaveMember={(id, updated) => {
                   handleUpdateMember(id, updated);
-                  setIsAddMemberModalOpen(false);
                 }}
               />
             </motion.div>
@@ -1088,7 +1801,163 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* 6. PWA INSTALL GUIDE MODAL */}
+      {/* 6. SYSTEM DEPARTMENT MODAL (ADD / EDIT) */}
+      <AnimatePresence>
+        {isDeptModalOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-slate-950/75 backdrop-blur-xs z-50 flex items-center justify-center p-4"
+            onClick={() => setIsDeptModalOpen(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.95, y: 20 }}
+              className="bg-white border border-slate-200 rounded-3xl p-6 shadow-2xl w-full max-w-md relative z-10"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between mb-4 pb-2.5 border-b border-slate-100">
+                <h3 className="text-sm font-black text-slate-800 flex items-center gap-1.5">
+                  <Settings className="w-4 h-4 text-indigo-500" />
+                  {editingDept ? '부서 정보 및 권한 수정' : '새로운 부서 생성 (부서 신설)'}
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setIsDeptModalOpen(false)}
+                  className="w-6 h-6 hover:bg-slate-100 rounded-md flex items-center justify-center text-xs text-slate-400 hover:text-slate-600 transition-colors cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className="space-y-4">
+                <div className="space-y-1">
+                  <label htmlFor="dept-name" className="text-[10px] font-extrabold uppercase text-slate-400 tracking-wider">
+                    부서 이름
+                  </label>
+                  <input
+                    id="dept-name"
+                    type="text"
+                    required
+                    value={deptNameInput}
+                    onChange={(e) => setDeptNameInput(e.target.value)}
+                    placeholder="예: 마케팅 커뮤니케이션 본부, 전략 TF팀"
+                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-slate-50/50"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label htmlFor="dept-pwd" className="text-[10px] font-extrabold uppercase text-slate-400 tracking-wider">
+                    관리 승인 비밀번호 (권한 증명)
+                  </label>
+                  <input
+                    id="dept-pwd"
+                    type="text"
+                    value={deptPasswordInput}
+                    onChange={(e) => setDeptPasswordInput(e.target.value)}
+                    placeholder="미입력시 기본 1234로 지정됩니다"
+                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-slate-50/50"
+                  />
+                  <p className="text-[9px] text-slate-400 leading-normal font-sans">
+                    * 작성 및 지정을 시작한 관리인 본인만 부서원을 추가, 부서를 삭제, 편집 복구(Import)할 수 있도록 잠금용 검증 비밀번호를 마킹합니다.
+                  </p>
+                </div>
+
+                <div className="flex gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsDeptModalOpen(false)}
+                    className="flex-1 py-2 bg-slate-50 border border-slate-200 hover:bg-slate-100/80 rounded-xl text-xs font-bold text-slate-550 transition-colors cursor-pointer"
+                  >
+                    취소
+                  </button>
+                  <button
+                    type="button"
+                    onClick={editingDept ? handleUpdateDepartment : handleCreateDepartment}
+                    className="flex-1 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all hover:scale-[1.01]"
+                  >
+                    {editingDept ? '수정 사항 저장 및 검증' : '부서 생성 완료 🚀'}
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* 7. SECURE PASSCODE AUTHORIZATION CHALLENGE MODAL */}
+      <AnimatePresence>
+        {isPasswordModalOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-slate-950/75 backdrop-blur-xs z-50 flex items-center justify-center p-4"
+            onClick={() => setIsPasswordModalOpen(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, y: 15 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.95, y: 15 }}
+              className="bg-white border border-slate-200 rounded-3xl p-6 shadow-2xl w-full max-w-sm relative z-10 text-center"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="mx-auto w-11 h-11 bg-amber-55 text-amber-600 rounded-full flex items-center justify-center border border-amber-100 bg-amber-50 mb-3">
+                <Lock className="w-5 h-5 text-amber-500 fill-amber-50" />
+              </div>
+
+              <h3 className="text-sm font-black text-slate-800">
+                부서 소유자 권한 비밀번호 검증
+              </h3>
+              <p className="text-[10px] text-slate-400 mt-1 max-w-xs mx-auto leading-normal">
+                선택한 부서의 <strong>&lsquo;{departments.find(d => d.id === passwordTargetDeptId)?.name}&rsquo;</strong> 권한 확보가 필요합니다. 부서 생성 시 세팅한 비밀번호를 제공하십시오.
+              </p>
+
+              <div className="mt-4 space-y-3">
+                <input
+                  id="auth-pword-input"
+                  type="password"
+                  value={passwordInput}
+                  onChange={(e) => setPasswordInput(e.target.value)}
+                  placeholder="비밀번호(암호) 입력 (기본: 1234)"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleVerifyPassword();
+                  }}
+                  className="w-full text-center px-3 py-2 border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-indigo-500 text-sm font-black bg-slate-50"
+                  autoFocus
+                />
+
+                {passwordErrorMsg && (
+                  <p className="text-[9px] text-red-500 font-bold leading-normal">
+                    ⚠️ {passwordErrorMsg}
+                  </p>
+                )}
+
+                <div className="flex gap-2 pt-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setIsPasswordModalOpen(false)}
+                    className="flex-1 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-500 cursor-pointer hover:bg-slate-100 transition-colors"
+                  >
+                    취소
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleVerifyPassword}
+                    className="flex-1 py-1.5 bg-indigo-650 hover:bg-indigo-700 bg-indigo-600 font-extrabold text-white rounded-xl text-xs transition-shadow shadow-sm active:scale-95 cursor-pointer"
+                  >
+                    권한 인증 승인
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* 8. PWA INSTALL GUIDE MODAL */}
       <AnimatePresence>
         {isInstallGuideOpen && (
           <motion.div
