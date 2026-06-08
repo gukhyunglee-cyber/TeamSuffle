@@ -27,3 +27,15 @@ export interface Group {
   name: string;
   members: Member[];
 }
+
+export interface AppUser {
+  uid: string;
+  email: string;
+  displayName: string;
+  photoUrl: string;
+  approved: boolean;
+  role: 'admin' | 'user';
+  createdAt: string;
+  updatedAt: string;
+}
+

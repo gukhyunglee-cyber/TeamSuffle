@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously } from 'firebase/auth';
+import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 
@@ -7,15 +7,21 @@ const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth();
 
-// Silently sign in anonymously to satisfy security rules while staying zero-config for the user
+const googleProvider = new GoogleAuthProvider();
+googleProvider.setCustomParameters({ prompt: 'select_account' });
+
+export async function loginWithGoogle() {
+  const result = await signInWithPopup(auth, googleProvider);
+  return result.user;
+}
+
+export async function logout() {
+  await signOut(auth);
+}
+
+// Keep a placeholder for compatibility
 export async function authenticateApp() {
-  try {
-    if (!auth.currentUser) {
-      await signInAnonymously(auth);
-    }
-  } catch (err) {
-    console.warn('Anonymous auth is restricted/disabled. Proceeding with unauthenticated mode.', err);
-  }
+  // Now using Google Sign-In, so we don't need silent anonymous authentication
 }
 
 // Connectivity fallback check (no-op as onSnapshot manages connectivity natively)

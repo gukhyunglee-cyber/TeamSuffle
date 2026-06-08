@@ -28,7 +28,7 @@ import {
   Edit3
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Member, Group, Department } from './types';
+import { Member, Group, Department, AppUser } from './types';
 import { DEFAULT_MEMBERS } from './data/defaultMembers';
 import AddMemberForm from './components/AddMemberForm';
 import MemberItemCard from './components/MemberItemCard';
@@ -36,12 +36,14 @@ import {
   collection,
   onSnapshot,
   setDoc,
+  getDoc,
   doc,
   deleteDoc,
   updateDoc,
   writeBatch
 } from 'firebase/firestore';
-import { db, authenticateApp, testConnection, handleFirestoreError, OperationType } from './firebase';
+import { onAuthStateChanged } from 'firebase/auth';
+import { db, auth, loginWithGoogle, logout, authenticateApp, testConnection, handleFirestoreError, OperationType } from './firebase';
 
 function shuffleArray<T>(array: T[]): T[] {
   const arr = [...array];
@@ -71,6 +73,12 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number = 2500): Promise<
 }
 
 export default function App() {
+  // Authentication States
+  const [currentUser, setCurrentUser] = useState<any>(null);
+  const [appUser, setAppUser] = useState<AppUser | null>(null);
+  const [isAuthLoading, setIsAuthLoading] = useState<boolean>(true);
+  const [users, setUsers] = useState<AppUser[]>([]);
+
   // Departments State
   const [departments, setDepartments] = useState<Department[]>(() => {
     const saved = localStorage.getItem('dept_departments');
@@ -105,8 +113,8 @@ export default function App() {
     return localStorage.getItem('force_offline_mode') !== 'true';
   });
 
-  // Navigation active steps: 1 = Member setup / 2 = Shuffling & Results
-  const [activeStep, setActiveStep] = useState<1 | 2>(1);
+  // Navigation active steps: 1 = Member setup / 2 = Shuffling & Results / 3 = Users Management (Admin)
+  const [activeStep, setActiveStep] = useState<1 | 2 | 3>(1);
 
   // Group size controls
   const [groupCount, setGroupCount] = useState<number>(3);
@@ -218,6 +226,160 @@ export default function App() {
     }
   };
 
+  // Monitor auth state changes
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser) {
+        setCurrentUser(firebaseUser);
+        const userDocRef = doc(db, 'users', firebaseUser.uid);
+        
+        try {
+          const userSnap = await getDoc(userDocRef);
+          if (!userSnap.exists()) {
+            const now = new Date().toISOString();
+            const emailLower = (firebaseUser.email || '').toLowerCase();
+            const isSuperAdminEmail = emailLower === 'gukhyunglee@gmail.com';
+            
+            const initialUserRecord: AppUser = {
+              uid: firebaseUser.uid,
+              email: firebaseUser.email || '',
+              displayName: firebaseUser.displayName || '사용자',
+              photoUrl: firebaseUser.photoURL || '',
+              approved: isSuperAdminEmail,
+              role: isSuperAdminEmail ? 'admin' : 'user',
+              createdAt: now,
+              updatedAt: now
+            };
+            await setDoc(userDocRef, initialUserRecord);
+            setAppUser(initialUserRecord);
+          } else {
+            setAppUser(userSnap.data() as AppUser);
+          }
+        } catch (err) {
+          console.error('Error fetching/creating user profile:', err);
+        }
+
+        const unsubUserSnap = onSnapshot(userDocRef, (docSnap) => {
+          if (docSnap.exists()) {
+            setAppUser(docSnap.data() as AppUser);
+          }
+        }, (err) => {
+          console.error('User snapshot error:', err);
+        });
+
+        setIsAuthLoading(false);
+        return () => {
+          unsubUserSnap();
+        };
+      } else {
+        setCurrentUser(null);
+        setAppUser(null);
+        setIsAuthLoading(false);
+      }
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  // Subscribe to all users if current user is an admin
+  useEffect(() => {
+    if (!appUser || appUser.role !== 'admin') {
+      setUsers([]);
+      return;
+    }
+
+    const usersRef = collection(db, 'users');
+    const unsubscribe = onSnapshot(usersRef, (snap) => {
+      const loadedUsers: AppUser[] = [];
+      snap.forEach((docSnap) => {
+        loadedUsers.push(docSnap.data() as AppUser);
+      });
+      const sortedUsers = loadedUsers.sort((a, b) => {
+        if (a.role === 'admin' && b.role !== 'admin') return -1;
+        if (a.role !== 'admin' && b.role === 'admin') return 1;
+        if (a.approved && !b.approved) return 1;
+        if (!a.approved && b.approved) return -1;
+        return a.displayName.localeCompare(b.displayName);
+      });
+      setUsers(sortedUsers);
+    }, (err) => {
+      console.error('Error fetching users:', err);
+    });
+
+    return () => unsubscribe();
+  }, [appUser]);
+
+  // Handle auth actions
+  const handleGoogleLogin = async () => {
+    try {
+      setIsAuthLoading(true);
+      await loginWithGoogle();
+    } catch (err) {
+      console.error('Google Sign-In Error:', err);
+      setIsAuthLoading(false);
+    }
+  };
+
+  const handleLogoutAction = async () => {
+    try {
+      await logout();
+      setCurrentUser(null);
+      setAppUser(null);
+    } catch (err) {
+      console.error('Sign out error:', err);
+    }
+  };
+
+  // Admin user approval actions
+  const handleToggleApproval = async (targetUser: AppUser) => {
+    if (targetUser.uid === appUser?.uid) {
+      alert('본인의 승인 상태는 수정할 수 없습니다.');
+      return;
+    }
+    const userRef = doc(db, 'users', targetUser.uid);
+    try {
+      await updateDoc(userRef, {
+        approved: !targetUser.approved,
+        updatedAt: new Date().toISOString()
+      });
+    } catch (err) {
+      alert('승인 상태 변경에 실패했습니다: ' + err);
+    }
+  };
+
+  const handleToggleRole = async (targetUser: AppUser) => {
+    if (targetUser.uid === appUser?.uid) {
+      alert('본인의 권한은 변경할 수 없습니다.');
+      return;
+    }
+    const userRef = doc(db, 'users', targetUser.uid);
+    const newRole = targetUser.role === 'admin' ? 'user' : 'admin';
+    try {
+      await updateDoc(userRef, {
+        role: newRole,
+        updatedAt: new Date().toISOString()
+      });
+    } catch (err) {
+      alert('권한 변경에 실패했습니다: ' + err);
+    }
+  };
+
+  const handleDeleteUser = async (targetUserId: string) => {
+    if (targetUserId === appUser?.uid) {
+      alert('본인 계정은 삭제할 수 없습니다.');
+      return;
+    }
+    if (!window.confirm('정말로 이 사용자를 삭제하시겠습니까? 등록된 사용자 프로필 기록이 완전히 제거됩니다.')) {
+      return;
+    }
+    const userRef = doc(db, 'users', targetUserId);
+    try {
+      await deleteDoc(userRef);
+    } catch (err) {
+      alert('사용자 삭제에 실패했습니다: ' + err);
+    }
+  };
+
   // Sync state variables with active changes
   useEffect(() => {
     if (selectedDeptId) {
@@ -229,6 +391,11 @@ export default function App() {
 
   // Real-time Cloud Synchronization of Departments & Members
   useEffect(() => {
+    if (!appUser || !appUser.approved) {
+      setIsDbLoading(false);
+      return;
+    }
+
     if (localStorage.getItem('force_offline_mode') === 'true') {
       setIsOfflineMode(true);
       setIsDbLoading(false);
@@ -401,7 +568,7 @@ export default function App() {
       if (unsubscribeDepts) unsubscribeDepts();
       if (unsubscribeMembers) unsubscribeMembers();
     };
-  }, [selectedDeptId]);
+  }, [selectedDeptId, appUser]);
 
   // Seed local storage with default if absolutely empty in offline mode
   useEffect(() => {
@@ -1064,6 +1231,106 @@ export default function App() {
     });
   };
 
+  // 1. Loading screen
+  if (isAuthLoading) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center font-sans text-slate-900 select-none">
+        <div className="flex flex-col items-center gap-4 animate-pulse">
+          <div className="w-12 h-12 bg-indigo-600 rounded-2xl flex items-center justify-center shadow-lg shadow-indigo-150">
+            <div className="w-6 h-6 border-3 border-white rounded-md"></div>
+          </div>
+          <h1 className="text-xl font-black tracking-tight text-slate-800 font-display">TeamShuffle</h1>
+          <p className="text-xs text-slate-400 font-bold tracking-wider uppercase">보안 연결 및 사용자 정보 구성 중...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // 2. Google Login Landing Screen
+  if (!currentUser || !appUser) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center font-sans text-slate-900 p-4 select-none relative overflow-hidden">
+        {/* Ambient background decoration */}
+        <div className="absolute top-[-10%] right-[-10%] w-[45%] h-[45%] bg-indigo-50/50 rounded-full blur-3xl -z-10" />
+        <div className="absolute bottom-[-10%] left-[-10%] w-[45%] h-[45%] bg-violet-50/40 rounded-full blur-3xl -z-10" />
+
+        <div className="w-full max-w-md bg-white border border-slate-200/90 rounded-3xl p-6 sm:p-8 shadow-2xl flex flex-col items-center text-center relative">
+          <div className="w-12 h-12 bg-indigo-600 rounded-2xl flex items-center justify-center shadow-lg shadow-indigo-150 mb-5">
+            <div className="w-6 h-6 border-3 border-white rounded-md"></div>
+          </div>
+
+          <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight text-slate-800 font-display">
+            TeamShuffle 조 편성 엔진
+          </h1>
+          <p className="text-xs text-slate-500 mt-2 leading-relaxed max-w-sm">
+            공정하고 투명한 부서원 셔플 조 추첨 서비스입니다.<br/>
+            구글 계정으로 로그인하여 안전하게 부서 명단을 관리해보세요.
+          </p>
+
+          <div className="w-full h-[1px] bg-slate-100 my-6" />
+
+          {/* Real login trigger button */}
+          <button
+            onClick={handleGoogleLogin}
+            className="w-full flex items-center justify-center gap-3 px-5 py-3.5 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-extrabold rounded-2xl transition-all cursor-pointer shadow-xs hover:border-slate-300 active:scale-[0.99] hover:scale-[1.01]"
+          >
+            {/* Custom Google inline icon */}
+            <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none">
+              <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+              <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+              <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l3.66-2.85z" fill="#FBBC05"/>
+              <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.85c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+            </svg>
+            <span className="text-sm text-slate-700 font-bold">Google 계정으로 계속하기</span>
+          </button>
+
+          <p className="text-[10px] text-slate-400 mt-5 font-bold leading-normal">
+            최초 로그인 시 승인 대기로 등록되며,<br/>
+            최고 관리자 승인 후 즉시 사용 가능합니다.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // 3. User is not approved yet -> show Pending approval Screen
+  if (appUser.approved !== true) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center font-sans text-slate-900 p-4 select-none relative overflow-hidden">
+        {/* Ambient background decoration */}
+        <div className="absolute top-[-10%] right-[-10%] w-[45%] h-[45%] bg-amber-50/40 rounded-full blur-3xl -z-10" />
+        <div className="absolute bottom-[-10%] left-[-10%] w-[45%] h-[45%] bg-indigo-50/30 rounded-full blur-3xl -z-10" />
+
+        <div className="w-full max-w-md bg-white border border-slate-200/90 rounded-3xl p-6 sm:p-8 shadow-2xl flex flex-col items-center text-center relative">
+          {/* Pulsing Lock Icon */}
+          <div className="w-14 h-14 bg-amber-50 border border-amber-100 rounded-full flex items-center justify-center mb-5 animate-bounce shadow-md">
+            <Lock className="w-6 h-6 text-amber-500 fill-amber-50" />
+          </div>
+
+          <h2 className="text-lg sm:text-xl font-extrabold tracking-tight text-slate-800">
+            가입 승인 대기 중 🔒
+          </h2>
+          <p className="text-xs text-slate-400 font-bold mt-1.5">{currentUser.email}</p>
+
+          <p className="text-xs text-slate-500 mt-4 leading-normal font-medium max-w-xs">
+            회원님의 구글 로그인 정보가 안전하게 기록되었습니다.<br/><br/>
+            현재 <strong>승인 대기 상태</strong>입니다. 최고관리자(gukhyunglee@gmail.com)가 확인 후 가입 승인을 완료하면, 이 컴퓨터에서 페이지가 실시간으로 자동 활성화됩니다!
+          </p>
+
+          <div className="w-full h-[1px] bg-slate-100 my-5" />
+
+          {/* Simple sign out / account change helper */}
+          <button
+            onClick={handleLogoutAction}
+            className="w-full py-2.5 bg-slate-50 hover:bg-slate-100 text-slate-600 border border-slate-200 rounded-xl text-xs font-bold transition-all cursor-pointer hover:scale-[1.01]"
+          >
+            다른 계정으로 로그인 또는 로그아웃
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans text-slate-900 overflow-hidden select-none">
       
@@ -1078,40 +1345,84 @@ export default function App() {
           </span>
         </div>
 
-        {/* Dynamic Nav-based Step indicator */}
-        <div className="flex flex-wrap items-center gap-2 select-none md:gap-3">
-          {showInstallBadge && (
-            <button
-              onClick={handleInstallClick}
-              className="px-3 py-1.5 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white rounded-xl text-[11px] font-bold flex items-center gap-1.5 transition-all shadow-sm hover:shadow-indigo-100 cursor-pointer hover:scale-[1.03]"
-              title="TeamShuffle 스마트 앱 다운로드 및 홈 화면 추가"
-            >
-              <Smartphone className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
-              <span>앱 설치</span>
-            </button>
-          )}
+        {/* Dynamic Nav-based Step indicator & Custom User Profile Menu */}
+        <div className="flex items-center gap-4 flex-wrap select-none">
+          <div className="flex items-center gap-2 select-none md:gap-3">
+            {showInstallBadge && (
+              <button
+                onClick={handleInstallClick}
+                className="px-3 py-1.5 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white rounded-xl text-[11px] font-bold flex items-center gap-1.5 transition-all shadow-sm hover:shadow-indigo-100 cursor-pointer hover:scale-[1.03]"
+                title="TeamShuffle 스마트 앱 다운로드 및 홈 화면 추가"
+              >
+                <Smartphone className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
+                <span>앱 설치</span>
+              </button>
+            )}
 
-          <button
-            onClick={() => setActiveStep(1)}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-              activeStep === 1
-                ? 'bg-indigo-50 text-indigo-600'
-                : 'text-slate-400 hover:text-slate-600'
-            }`}
-          >
-            등록
-          </button>
-          <span className="text-slate-300 text-xs hidden sm:inline">➔</span>
-          <button
-            onClick={() => setActiveStep(2)}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-              activeStep === 2
-                ? 'bg-indigo-50 text-indigo-600'
-                : 'text-slate-400 hover:text-slate-600'
-            }`}
-          >
-            추첨
-          </button>
+            <button
+              onClick={() => setActiveStep(1)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                activeStep === 1
+                  ? 'bg-indigo-50 text-indigo-600'
+                  : 'text-slate-400 hover:text-slate-600'
+              }`}
+            >
+              등록
+            </button>
+            <span className="text-slate-300 text-xs hidden sm:inline">➔</span>
+            <button
+              onClick={() => setActiveStep(2)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                activeStep === 2
+                  ? 'bg-indigo-50 text-indigo-600'
+                  : 'text-slate-400 hover:text-slate-600'
+              }`}
+            >
+              추첨
+            </button>
+
+            {appUser && appUser.role === 'admin' && (
+              <>
+                <span className="text-slate-300 text-xs hidden sm:inline">➔</span>
+                <button
+                  onClick={() => setActiveStep(3)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    activeStep === 3
+                      ? 'bg-indigo-50 text-indigo-600'
+                      : 'text-slate-400 hover:text-slate-600'
+                  }`}
+                >
+                  승인 관리
+                </button>
+              </>
+            )}
+          </div>
+
+          {/* User Profile Pill & Sign-out button */}
+          {appUser && (
+            <div className="flex items-center gap-2.5 border border-slate-200 pl-2 pr-3 py-1 rounded-full bg-slate-50 shadow-2xs select-none">
+              <img
+                src={appUser.photoUrl || 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=100&auto=format&fit=crop&q=80'}
+                alt={appUser.displayName}
+                referrerPolicy="no-referrer"
+                className="w-7 h-7 rounded-full border border-slate-300"
+              />
+              <div className="hidden sm:flex flex-col text-left">
+                <span className="text-[11px] font-extrabold text-slate-700 leading-none">
+                  {appUser.displayName}
+                </span>
+                <span className="text-[9px] font-bold text-indigo-600 mt-0.5 leading-none">
+                  {appUser.role === 'admin' ? '최고관리자' : '승인완료'}
+                </span>
+              </div>
+              <button
+                onClick={handleLogoutAction}
+                className="hover:text-rose-600 font-extrabold text-[10px] text-slate-400 shrink-0 transition-colors ml-1 cursor-pointer pl-1.5 border-l border-slate-200"
+              >
+                로그아웃
+              </button>
+            </div>
+          )}
         </div>
       </nav>
 
@@ -1128,34 +1439,25 @@ export default function App() {
               transition={{ duration: 0.25 }}
               className="absolute inset-0 flex flex-col p-4 md:p-6 lg:p-8 gap-4 overflow-y-auto"
             >
-              {/* Simple Department Creator Row */}
-              <div className="max-w-6xl mx-auto w-full flex justify-end shrink-0">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setEditingDept(null);
-                    setDeptNameInput('');
-                    setDeptPasswordInput('');
-                    setIsDeptModalOpen(true);
-                  }}
-                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-xs rounded-xl flex items-center justify-center gap-1.5 transition-all shadow-md shrink-0 hover:scale-[1.02]"
-                >
-                  <Plus className="w-4 h-4 text-emerald-300" />
-                  새 부서
-                </button>
-              </div>
-
               {/* Grid-based interactive department switcher card */}
-              <div className="max-w-6xl mx-auto w-full bg-white border border-slate-200/90 rounded-3xl p-4 sm:p-5 shadow-sm shrink-0">
-                <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-3.5">
-                  <span className="text-[11px] text-slate-400 font-extrabold flex items-center gap-1 uppercase select-none">
-                    <Settings className="w-3.5 h-3.5 text-indigo-500" /> Active Department Select
-                  </span>
-                  <span className="text-[10px] text-slate-350 select-none">부서 클릭 시 즉시 활성화됩니다</span>
-                </div>
-
+              <div className="w-full bg-white border border-slate-200/90 rounded-3xl p-4 sm:p-5 shadow-sm shrink-0">
                 {/* Horizontal / Grid-friendly dynamic department list with lock/unlock overlays */}
                 <div className="flex flex-wrap gap-2">
+                  {/* Add Department Button integrated inside the grid */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingDept(null);
+                      setDeptNameInput('');
+                      setDeptPasswordInput('');
+                      setIsDeptModalOpen(true);
+                    }}
+                    className="px-3.5 py-3 rounded-2xl border border-dashed border-slate-300 hover:border-indigo-400 bg-slate-50/30 hover:bg-indigo-50/20 text-slate-600 hover:text-indigo-600 transition-all cursor-pointer flex items-center justify-center gap-1.5 min-w-[140px] md:min-w-[170px] select-none text-xs font-bold"
+                  >
+                    <Plus className="w-3.5 h-3.5 text-indigo-500" />
+                    <span>새 부서 추가</span>
+                  </button>
+
                   {departments.map((dept) => {
                     const isActive = selectedDeptId === dept.id;
                     const isUnlocked = unlockedDepts.includes(dept.id);
@@ -1220,7 +1522,7 @@ export default function App() {
               </div>
 
               {/* Full Width Integrated List & Controls Panel */}
-              <div className="flex-1 max-w-6xl mx-auto w-full bg-white border border-slate-200 rounded-3xl shadow-sm p-6 sm:p-8 flex flex-col min-h-[400px]">
+              <div className="flex-1 w-full bg-white border border-slate-200 rounded-3xl shadow-sm p-6 sm:p-8 flex flex-col min-h-[400px]">
                 {/* Minimized Panel Header: 1-line layout */}
                 <div className="flex flex-row items-center justify-between gap-3 pb-3 border-b border-slate-150 shrink-0 select-none">
                   <div className="flex items-center gap-2.5 min-w-0">
@@ -1398,7 +1700,7 @@ export default function App() {
                 </div>
               </div>
             </motion.div>
-          ) : (
+          ) : activeStep === 2 ? (
             /* STEP 2 Screen window (Compact Top Settings & Wide Results map) */
             <motion.div
               key="step2-window"
@@ -1658,7 +1960,145 @@ export default function App() {
                 </div>
               </div>
             </motion.div>
-          )}
+          ) : activeStep === 3 && appUser?.role === 'admin' ? (
+            /* STEP 3 Screen window (User Permission Admin Panel) */
+            <motion.div
+              key="step3-window"
+              initial={{ opacity: 0, x: 15 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -15 }}
+              transition={{ duration: 0.25 }}
+              className="absolute inset-0 flex flex-col p-4 md:p-6 lg:p-8 gap-6 overflow-y-auto"
+            >
+              {/* Header Info Block */}
+              <div id="admin-header-card" className="w-full bg-white border border-slate-200 rounded-3xl p-6 shadow-sm shrink-0">
+                <h2 className="text-xl font-extrabold text-slate-800 tracking-tight flex items-center gap-2">
+                  <Users className="w-5 h-5 text-indigo-600" />
+                  <span>구글 로그인 및 최고 관리 권한 승인 센터</span>
+                </h2>
+                <p className="text-xs text-slate-500 mt-1 max-w-2xl leading-normal">
+                  구글 Sign-In을 통해 시스템에 로그인 기록을 남긴 가입 대기자 및 일반 사용자들을 모니터링하고, 가입을 승인하거나 관리자 권한을 부여할 수 있습니다. 최고관리자만이 접근이 허용되고 실시간으로 연동됩니다.
+                </p>
+
+                {/* Metric blocks */}
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mt-5">
+                  <div className="bg-slate-50 border border-slate-150 rounded-2xl p-4 flex flex-col">
+                    <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider">전체 가입 계정</span>
+                    <span className="text-xl font-extrabold text-slate-800 mt-1">{users.length} 명</span>
+                  </div>
+                  <div className="bg-amber-50/55 border border-amber-100 rounded-2xl p-4 flex flex-col">
+                    <span className="text-[10px] text-amber-500 font-extrabold uppercase tracking-wider">승인 대기 중</span>
+                    <span className="text-xl font-extrabold text-amber-600 mt-1">
+                      {users.filter(u => !u.approved).length} 명
+                    </span>
+                  </div>
+                  <div className="bg-indigo-50/55 border border-indigo-100 rounded-2xl p-4 flex flex-col col-span-2 sm:col-span-1">
+                    <span className="text-[10px] text-indigo-500 font-extrabold uppercase tracking-wider">최고 관리자 수</span>
+                    <span className="text-xl font-extrabold text-indigo-650 mt-1">
+                      {users.filter(u => u.role === 'admin').length} 명
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Users card collection list */}
+              <div id="admin-user-list-card" className="bg-white border border-slate-200 rounded-3xl p-5 shadow-sm flex-1 overflow-hidden flex flex-col">
+                <div className="text-xs font-extrabold text-slate-400 tracking-wider mb-4 uppercase">
+                  등록 사용자 목록 ({users.length} 건)
+                </div>
+
+                <div className="flex-1 overflow-y-auto space-y-3.5 pr-2">
+                  {users.length === 0 ? (
+                    <div className="h-full flex flex-col items-center justify-center p-8 text-slate-400 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+                      <Users className="w-8 h-8 text-slate-300 shrink-0 mb-2 animate-pulse" />
+                      <p className="text-xs font-bold">등록된 사용자 정보가 비어있습니다.</p>
+                    </div>
+                  ) : (
+                    users.map((target) => (
+                      <div
+                        key={target.uid}
+                        id={`user-row-${target.uid}`}
+                        className="flex flex-col sm:flex-row items-start sm:items-center justify-between p-4 border border-slate-150 rounded-2xl hover:bg-slate-50/45 transition-colors gap-4"
+                      >
+                        {/* Left User details structure */}
+                        <div className="flex items-center gap-3">
+                          <img
+                            src={target.photoUrl || 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=100&auto=format&fit=crop&q=80'}
+                            alt={target.displayName}
+                            referrerPolicy="no-referrer"
+                            className="w-10 h-10 rounded-full border border-slate-200 shadow-xs"
+                          />
+                          <div>
+                            <div className="flex flex-wrap items-center gap-1.5 row-gap-1">
+                              <span className="font-extrabold text-slate-850 text-sm">
+                                {target.displayName}
+                              </span>
+                              {target.role === 'admin' ? (
+                                <span className="text-[9px] font-extrabold px-2 py-0.5 rounded-md bg-indigo-100 text-indigo-600">
+                                  최고관리자
+                                </span>
+                              ) : (
+                                <span className="text-[9px] font-extrabold px-2 py-0.5 rounded-md bg-slate-100 text-slate-600">
+                                  일반회원
+                                </span>
+                              )}
+                              
+                              {target.approved ? (
+                                <span className="text-[9px] font-extrabold px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-700">
+                                  승인 완료
+                                </span>
+                              ) : (
+                                <span className="text-[9px] font-extrabold px-2 py-0.5 rounded-md bg-amber-100 text-amber-700 animate-pulse">
+                                  가입 대기 중
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-xs text-slate-400 font-medium mt-1 select-all">
+                              {target.email}
+                            </div>
+                            <div className="text-[9px] text-slate-350 tracking-wide mt-0.5">
+                              최초 가입 시간: {new Date(target.createdAt).toLocaleString('ko-KR')}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Actions buttons */}
+                        <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto justify-end">
+                          <button
+                            id={`btn-approve-${target.uid}`}
+                            onClick={() => handleToggleApproval(target)}
+                            className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-colors cursor-pointer ${
+                              target.approved
+                                ? 'bg-amber-50 border-amber-100 text-amber-700 hover:bg-amber-100/50'
+                                : 'bg-emerald-50 border-emerald-150 text-emerald-850 hover:bg-emerald-100/50'
+                            }`}
+                          >
+                            {target.approved ? '승인 대기 상태로 전환' : '사용 승인하기'}
+                          </button>
+
+                          <button
+                            id={`btn-role-${target.uid}`}
+                            onClick={() => handleToggleRole(target)}
+                            className="px-3 py-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-xl text-xs font-bold transition-colors cursor-pointer"
+                          >
+                            {target.role === 'admin' ? '일반회원으로 지정' : '최고관리자 지정'}
+                          </button>
+
+                          <button
+                            id={`btn-delete-${target.uid}`}
+                            onClick={() => handleDeleteUser(target.uid)}
+                            className="px-3 py-1.5 bg-rose-50 border border-rose-100 hover:bg-rose-100/40 text-rose-650 rounded-xl text-xs font-bold transition-colors cursor-pointer"
+                          >
+                            삭제
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </motion.div>
+          ) : null}
         </AnimatePresence>
       </div>
 

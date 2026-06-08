@@ -1,5 +1,47 @@
 {
   "entities": {
+    "User": {
+      "title": "User",
+      "description": "A user profile record registered via Google Sign-In with approval states.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Unique user credentials identifier."
+        },
+        "email": {
+          "type": "string",
+          "description": "User email address matching Google auth."
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Public screen name."
+        },
+        "photoUrl": {
+          "type": "string",
+          "description": "User profile avatar url."
+        },
+        "approved": {
+          "type": "boolean",
+          "description": "Whether the user's login access is approved by the Super Admin."
+        },
+        "role": {
+          "type": "string",
+          "description": "The administrative role (e.g. admin, user)."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when the user was first registered."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when the user profile was last modified."
+        }
+      },
+      "required": ["uid", "email", "displayName", "photoUrl", "approved", "role", "createdAt", "updatedAt"]
+    },
     "Department": {
       "title": "Department",
       "description": "A department or team that holds a list of members.",
@@ -66,6 +108,10 @@
     }
   },
   "firestore": {
+    "users/{userId}": {
+      "schema": "User",
+      "description": "Registered Google sign-in users with authorization flags."
+    },
     "departments/{departmentId}": {
       "schema": "Department",
       "description": "A list of created departments with access passwords."
