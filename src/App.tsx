@@ -18,7 +18,9 @@ import {
   Award,
   Crown,
   HelpCircle,
-  Plus
+  Plus,
+  Download,
+  Smartphone
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Member, Group } from './types';
@@ -51,6 +53,50 @@ export default function App() {
 
   // Navigation active steps: 1 = Member setup / 2 = Shuffling & Results
   const [activeStep, setActiveStep] = useState<1 | 2>(1);
+
+  // PWA (Progressive Web App) states
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [showInstallBadge, setShowInstallBadge] = useState<boolean>(true);
+  const [isInstallGuideOpen, setIsInstallGuideOpen] = useState(false);
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+      setShowInstallBadge(true);
+    };
+    window.addEventListener('beforeinstallprompt', handler);
+
+    const afterInstallHandler = () => {
+      console.log('TeamShuffle has been successfully installed!');
+      setDeferredPrompt(null);
+      setShowInstallBadge(false);
+    };
+    window.addEventListener('appinstalled', afterInstallHandler);
+
+    // Initial check for standalone mode
+    if (window.matchMedia('(display-mode: standalone)').matches || (navigator as any).standalone) {
+      setShowInstallBadge(false);
+    }
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handler);
+      window.removeEventListener('appinstalled', afterInstallHandler);
+    };
+  }, []);
+
+  const handleInstallClick = async () => {
+    if (deferredPrompt) {
+      deferredPrompt.prompt();
+      const { outcome } = await deferredPrompt.userChoice;
+      console.log(`User response to the install prompt: ${outcome}`);
+      setDeferredPrompt(null);
+      setShowInstallBadge(false);
+    } else {
+      // If native prompt is not available (such as on iOS or when using iframe), open the beautiful guide modal
+      setIsInstallGuideOpen(true);
+    }
+  };
 
   // Group size controls
   const [groupCount, setGroupCount] = useState<number>(3);
@@ -248,7 +294,18 @@ export default function App() {
         </div>
 
         {/* Dynamic Nav-based Step indicator */}
-        <div className="flex items-center gap-2 select-none">
+        <div className="flex flex-wrap items-center gap-2 select-none md:gap-3">
+          {showInstallBadge && (
+            <button
+              onClick={handleInstallClick}
+              className="px-3 py-1.5 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white rounded-xl text-[11px] font-bold flex items-center gap-1.5 transition-all shadow-sm hover:shadow-indigo-100 cursor-pointer hover:scale-[1.03]"
+              title="TeamShuffle 스마트 앱 다운로드 및 홈 화면 추가"
+            >
+              <Smartphone className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
+              <span>앱 설치</span>
+            </button>
+          )}
+
           <button
             onClick={() => setActiveStep(1)}
             className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
@@ -259,7 +316,7 @@ export default function App() {
           >
             Step 1. 부서원 관리
           </button>
-          <span className="text-slate-300 text-xs">➔</span>
+          <span className="text-slate-300 text-xs hidden sm:inline">➔</span>
           <button
             onClick={() => setActiveStep(2)}
             className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
@@ -776,6 +833,120 @@ export default function App() {
                   setIsAddMemberModalOpen(false);
                 }}
               />
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* 6. PWA INSTALL GUIDE MODAL */}
+      <AnimatePresence>
+        {isInstallGuideOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-slate-950/75 backdrop-blur-md z-50 flex items-center justify-center p-4"
+            onClick={() => setIsInstallGuideOpen(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, y: 20, opacity: 0 }}
+              animate={{ scale: 1, y: 0, opacity: 1 }}
+              exit={{ scale: 0.95, y: 20, opacity: 0 }}
+              transition={{ type: 'spring', duration: 0.45 }}
+              className="bg-white border border-slate-200 rounded-3xl p-6 md:p-8 shadow-2xl w-full max-w-lg relative z-10 overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Sparkle background accent */}
+              <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-50 rounded-full blur-3xl -z-10 pointer-events-none opacity-60" />
+              
+              {/* Modal Header */}
+              <div className="flex items-start justify-between gap-4 mb-5 pb-3 border-b border-slate-100">
+                <div className="flex gap-3">
+                  <div className="w-12 h-12 bg-indigo-50 border border-indigo-100 rounded-2xl flex items-center justify-center shrink-0 shadow-inner">
+                    <img
+                      src="/icon.svg"
+                      alt="TeamShuffle Icon"
+                      className="w-8 h-8 object-contain"
+                      referrerPolicy="no-referrer"
+                    />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-slate-800 tracking-tight flex items-center gap-1.5">
+                      TeamShuffle 홈 화면 앱 추가
+                    </h3>
+                    <p className="text-xs text-slate-400 mt-0.5">매일 한 번의 터치로 간편하게 스마트폰 앱으로 사용하세요!</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsInstallGuideOpen(false)}
+                  className="w-6 h-6 hover:bg-slate-100 rounded-md flex items-center justify-center text-xs text-slate-400 hover:text-slate-600 transition-colors cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Grid with Platform instructions */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 my-4">
+                {/* iPhone / iOS / Safari Column */}
+                <div className="bg-slate-50 border border-slate-150 rounded-2xl p-4 flex flex-col justify-between">
+                  <div>
+                    <span className="text-[10px] uppercase font-bold tracking-widest text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full inline-block mb-2">
+                       iPhone / Safari
+                    </span>
+                    <ul className="space-y-2.5 text-xs text-slate-600 font-medium">
+                      <li className="flex gap-2">
+                        <span className="w-5 h-5 bg-white border border-slate-200 rounded-full flex items-center justify-center font-bold text-[10px] text-slate-700 shrink-0">1</span>
+                        <span>사파리(Safari) 브라우저 하단 중앙의 <strong>공유 버튼 <span className="text-indigo-600 font-bold">⎋</span></strong>을 터치합니다.</span>
+                      </li>
+                      <li className="flex gap-2">
+                        <span className="w-5 h-5 bg-white border border-slate-200 rounded-full flex items-center justify-center font-bold text-[10px] text-slate-700 shrink-0">2</span>
+                        <span>메뉴를 아래로 내려 <strong>'홈 화면에 추가'</strong> 항목을 선택합니다.</span>
+                      </li>
+                      <li className="flex gap-2">
+                        <span className="w-5 h-5 bg-white border border-slate-200 rounded-full flex items-center justify-center font-bold text-[10px] text-slate-700 shrink-0">3</span>
+                        <span>상단 우측의 <strong>'추가'</strong> 버튼을 클릭하면 바탕화면에 설치됩니다!</span>
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+
+                {/* Android / Chrome Column */}
+                <div className="bg-slate-50 border border-slate-150 rounded-2xl p-4 flex flex-col justify-between">
+                  <div>
+                    <span className="text-[10px] uppercase font-bold tracking-widest text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full inline-block mb-2">
+                      🤖 Android / Chrome
+                    </span>
+                    <ul className="space-y-2.5 text-xs text-slate-600 font-medium">
+                      <li className="flex gap-2">
+                        <span className="w-5 h-5 bg-white border border-slate-200 rounded-full flex items-center justify-center font-bold text-[10px] text-slate-700 shrink-0">1</span>
+                        <span>위 항목의 <strong>'앱 설치'</strong> 버튼을 터치하거나 주소창의 더보기 <strong>(⋮) 아이콘</strong>을 클릭합니다.</span>
+                      </li>
+                      <li className="flex gap-2">
+                        <span className="w-5 h-5 bg-white border border-slate-200 rounded-full flex items-center justify-center font-bold text-[10px] text-slate-700 shrink-0">2</span>
+                        <span>안내 메뉴 중 <strong>'앱 설치'</strong> 혹은 <strong>'홈 화면에 추가'</strong>를 선택합니다.</span>
+                      </li>
+                      <li className="flex gap-2">
+                        <span className="w-5 h-5 bg-white border border-slate-200 rounded-full flex items-center justify-center font-bold text-[10px] text-slate-700 shrink-0">3</span>
+                        <span>자동 설치가 완료되고, 부서원 명단이 오프라인 상태에서도 작동합니다!</span>
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+
+              {/* Bottom footer notice */}
+              <div className="mt-5 pt-3.5 border-t border-slate-100 flex items-center justify-between text-[10px] text-slate-400 font-bold">
+                <span className="flex items-center gap-1">
+                  ⚡ 오프라인 완전 대응 / 0.1초 이내 초고속 구동
+                </span>
+                <button
+                  onClick={() => setIsInstallGuideOpen(false)}
+                  className="px-4 py-1.5 bg-slate-900 text-white rounded-xl text-xs hover:bg-slate-800 transition-colors cursor-pointer"
+                >
+                  확인 완료
+                </button>
+              </div>
             </motion.div>
           </motion.div>
         )}
