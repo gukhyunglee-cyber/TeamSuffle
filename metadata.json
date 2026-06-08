@@ -1,0 +1,6 @@
+{
+  "name": "TeamShuffle",
+  "description": "부서원들의 이름과 사진을 기반으로, 무작위로 활기찬 애니메이션 효과와 함께 조를 편성해주는 도구입니다.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
