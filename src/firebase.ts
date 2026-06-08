@@ -150,10 +150,10 @@ export async function logout() {
     // Perform thorough local browser caching purge
     if (typeof window !== 'undefined') {
       try {
-        // Clear localStorage keys with 'firebase' or 'g_state'
+        // Clear localStorage keys with 'firebase' or 'g_state', excluding custom configurations
         for (let i = localStorage.length - 1; i >= 0; i--) {
           const key = localStorage.key(i);
-          if (key && (key.toLowerCase().includes('firebase') || key.toLowerCase().includes('g_state'))) {
+          if (key && (key.toLowerCase().includes('firebase') || key.toLowerCase().includes('g_state')) && key !== 'CUSTOM_FIREBASE_CONFIG') {
             localStorage.removeItem(key);
           }
         }

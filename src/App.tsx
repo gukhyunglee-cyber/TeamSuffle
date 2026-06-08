@@ -297,7 +297,6 @@ export default function App() {
 
     try {
       unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-        clearTimeout(authTimeout);
         // Clean up previous snapshots
         if (unsubUserSnap) {
           unsubUserSnap();
@@ -307,15 +306,26 @@ export default function App() {
         if (firebaseUser) {
           setCurrentUser(firebaseUser);
           
+          let initCompleted = false;
+          // Sub-timer to prevent firestore hang from freezing the loading UI
+          const fetchTimeout = setTimeout(() => {
+            if (!initCompleted) {
+              console.warn('Firestore user fetch taking longer than usual. Force un-sticking loading screen.');
+              setIsAuthLoading(false);
+            }
+          }, 3200);
+          
           try {
             const userDocRef = doc(db, 'users', firebaseUser.uid);
             const userSnap = await getDoc(userDocRef);
+            
+            let fetchedUser: AppUser;
             if (!userSnap.exists()) {
               const now = new Date().toISOString();
               const emailLower = (firebaseUser.email || '').toLowerCase();
               const isSuperAdminEmail = emailLower === 'gukhyunglee@gmail.com';
               
-              const initialUserRecord: AppUser = {
+              fetchedUser = {
                 uid: firebaseUser.uid,
                 email: firebaseUser.email || '',
                 displayName: firebaseUser.displayName || '사용자',
@@ -325,11 +335,22 @@ export default function App() {
                 createdAt: now,
                 updatedAt: now
               };
-              await setDoc(userDocRef, initialUserRecord);
-              setAppUser(initialUserRecord);
+              await setDoc(userDocRef, fetchedUser);
             } else {
-              setAppUser(userSnap.data() as AppUser);
+              fetchedUser = userSnap.data() as AppUser;
             }
+
+            // Force dynamic Super Admin tier upgrade if the user is gukhyunglee@gmail.com
+            const emailLower = (firebaseUser.email || '').toLowerCase();
+            if (emailLower === 'gukhyunglee@gmail.com') {
+              if (fetchedUser.role !== 'admin' || !fetchedUser.approved) {
+                fetchedUser.role = 'admin';
+                fetchedUser.approved = true;
+                await setDoc(userDocRef, fetchedUser, { merge: true });
+              }
+            }
+
+            setAppUser(fetchedUser);
             setAuthError(null); // Clear previous errors if successful
           } catch (err: any) {
             console.error('Error fetching/creating user profile:', err);
@@ -346,7 +367,13 @@ export default function App() {
             const userDocRef = doc(db, 'users', firebaseUser.uid);
             unsubUserSnap = onSnapshot(userDocRef, (docSnap) => {
               if (docSnap.exists()) {
-                setAppUser(docSnap.data() as AppUser);
+                const updatedUser = docSnap.data() as AppUser;
+                const emailLower = (firebaseUser.email || '').toLowerCase();
+                if (emailLower === 'gukhyunglee@gmail.com') {
+                  updatedUser.role = 'admin';
+                  updatedUser.approved = true;
+                }
+                setAppUser(updatedUser);
               }
             }, (err: any) => {
               console.error('User snapshot error:', err);
@@ -359,10 +386,14 @@ export default function App() {
             console.error('Failed to set up user snapshot observer:', snapshotErr);
           }
 
+          initCompleted = true;
+          clearTimeout(fetchTimeout);
+          clearTimeout(authTimeout);
           setIsAuthLoading(false);
         } else {
           setCurrentUser(null);
           setAppUser(null);
+          clearTimeout(authTimeout);
           setIsAuthLoading(false);
         }
       });
