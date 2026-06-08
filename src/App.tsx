@@ -305,7 +305,11 @@ export default function App() {
               let lastErr: any;
               for (let i = 0; i < maxRetries; i++) {
                 try {
-                  return await getDoc(docRef);
+                  const docPromise = getDoc(docRef);
+                  const timeoutPromise = new Promise<never>((_, reject) =>
+                    setTimeout(() => reject(new Error('Failed to get document because the client is offline (timeout)')), 3500)
+                  );
+                  return await Promise.race([docPromise, timeoutPromise]);
                 } catch (err: any) {
                   lastErr = err;
                   const errMsg = err?.message || String(err);
@@ -313,7 +317,8 @@ export default function App() {
                     errMsg.includes('offline') ||
                     errMsg.toLowerCase().includes('failed to get document') ||
                     errMsg.toLowerCase().includes('client is offline') ||
-                    errMsg.toLowerCase().includes('network')
+                    errMsg.toLowerCase().includes('network') ||
+                    errMsg.toLowerCase().includes('timeout')
                   ) {
                     console.warn(`Firestore getDoc failed (attempt ${i + 1}/${maxRetries}). Retrying in ${delayMs}ms...`);
                     await new Promise(resolve => setTimeout(resolve, delayMs));
