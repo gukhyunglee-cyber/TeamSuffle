@@ -101,7 +101,6 @@ export default function App() {
   // Group size controls
   const [groupCount, setGroupCount] = useState<number>(3);
   const [groups, setGroups] = useState<Group[]>([]);
-  const [searchQuery, setSearchQuery] = useState('');
   const [isAddMemberModalOpen, setIsAddMemberModalOpen] = useState(false);
   
   // Shuffling states
@@ -122,17 +121,6 @@ export default function App() {
     }
   }, [members.length, groupCount]);
 
-  // Dynamic search filter for members
-  const filteredMembers = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase();
-    if (!query) return members;
-    return members.filter(
-      (m) =>
-        m.name.toLowerCase().includes(query) ||
-        (m.role && m.role.toLowerCase().includes(query))
-    );
-  }, [members, searchQuery]);
-
   // Toggle Single Member Selected State
   const handleToggleSelect = (id: string) => {
     setMembers((prev) =>
@@ -145,13 +133,7 @@ export default function App() {
   // Bulk Select / Deselect All
   const handleToggleAll = (select: boolean) => {
     setMembers((prev) =>
-      prev.map((m) => {
-        // Apply only to filtered view list to feel intuitive
-        const isMatch = !searchQuery.trim() || 
-          m.name.toLowerCase().includes(searchQuery.trim().toLowerCase()) ||
-          (m.role && m.role.toLowerCase().includes(searchQuery.trim().toLowerCase()));
-        return isMatch ? { ...m, selected: select } : m;
-      })
+      prev.map((m) => ({ ...m, selected: select }))
     );
   };
 
@@ -314,7 +296,7 @@ export default function App() {
                 : 'text-slate-400 hover:text-slate-600'
             }`}
           >
-            Step 1. 부서원 관리
+            등록
           </button>
           <span className="text-slate-300 text-xs hidden sm:inline">➔</span>
           <button
@@ -325,7 +307,7 @@ export default function App() {
                 : 'text-slate-400 hover:text-slate-600'
             }`}
           >
-            Step 2. 조 추첨 및 결과
+            추첨
           </button>
         </div>
       </nav>
@@ -345,70 +327,46 @@ export default function App() {
             >
               {/* Full Width Integrated List & Controls Panel */}
               <div className="flex-1 max-w-6xl mx-auto w-full bg-white border border-slate-200 rounded-3xl shadow-sm p-6 sm:p-8 flex flex-col min-h-[400px]">
-                {/* Panel Header */}
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100 shrink-0">
-                  <div>
-                    <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2 animate-pulse-once">
-                      부서원 명단 및 추첨 참가 여부
-                      <span className="text-xs bg-slate-100 text-slate-500 font-bold px-2 py-0.5 rounded-full">
-                        {members.length}명 등록됨
+                {/* Minimized Panel Header: 1-line layout */}
+                <div className="flex flex-row items-center justify-between gap-3 pb-3 border-b border-slate-150 shrink-0 select-none">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <h3 className="text-xs sm:text-sm font-black text-slate-800 flex items-center gap-1.5 shrink-0 select-none">
+                      부서원 명단
+                      <span className="text-[10px] bg-slate-100 text-slate-500 font-bold px-1.5 py-0.5 rounded-md">
+                        {members.length}명
                       </span>
                     </h3>
-                    <p className="text-xs text-slate-400 mt-0.5">명단 왼쪽 체크박스를 이용해 조 편성 대상자에서 제외/포함 할 수 있습니다.</p>
+                    <div className="hidden sm:flex items-center gap-2 text-[10px] text-slate-450 font-semibold select-none shrink-0">
+                      <span className="text-indigo-600">참가 {members.filter(m => m.selected !== false).length}명</span>
+                      <span className="text-slate-300">|</span>
+                      <span>제외 {members.filter(m => m.selected === false).length}명</span>
+                    </div>
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1.5 shrink-0">
                     <button
                       type="button"
                       onClick={() => handleToggleAll(true)}
-                      className="px-3 py-1.5 bg-indigo-50 border border-indigo-100 hover:bg-indigo-100/70 text-indigo-700 text-xs font-bold rounded-lg transition-all cursor-pointer"
+                      className="px-2.5 py-1.5 bg-indigo-50 hover:bg-indigo-100/70 text-indigo-700 text-[10px] font-extrabold rounded-lg transition-all cursor-pointer"
                     >
-                      전체 선택
+                      전체선택
                     </button>
                     <button
                       type="button"
                       onClick={() => handleToggleAll(false)}
-                      className="px-3 py-1.5 bg-slate-50 border border-slate-200 hover:bg-slate-100 text-slate-600 text-xs font-bold rounded-lg transition-all cursor-pointer"
+                      className="px-2.5 py-1.5 bg-slate-50 border border-slate-200 hover:bg-slate-100 text-slate-600 text-[10px] font-extrabold rounded-lg transition-all cursor-pointer"
                     >
-                      전체 해제
+                      전체해제
                     </button>
                   </div>
                 </div>
 
-                {/* Filter and stats row */}
-                <div className="flex flex-col sm:flex-row items-center gap-3 py-3 border-b border-slate-50 shrink-0">
-                  <div className="relative w-full sm:w-72">
-                    <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400">
-                      <Search className="w-3.5 h-3.5" />
-                    </span>
-                    <input
-                      id="search-roster"
-                      type="text"
-                      placeholder="이름 빠른 검색..."
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      className="w-full pl-9 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:bg-white transition-all"
-                    />
-                  </div>
-
-                  <div className="flex items-center gap-4 text-xs font-semibold text-slate-400 sm:ml-auto select-none">
-                    <span className="flex items-center gap-1 text-indigo-600">
-                      <Check className="w-3.5 h-3.5" />
-                      편성 대상: {members.filter(m => m.selected !== false).length}명
-                    </span>
-                    <span className="w-1 h-1 bg-slate-200 rounded-full"></span>
-                    <span className="text-slate-400">
-                      편성 제외: {members.filter(m => m.selected === false).length}명
-                    </span>
-                  </div>
-                </div>
-
-                {/* Roster database Grid view */}
-                <div className="flex-1 overflow-y-auto py-4 minimal-scrollbar">
+                {/* Highly compact Roster database Grid view with maximized density */}
+                <div className="flex-1 overflow-y-auto py-2.5 minimal-scrollbar mt-1">
                   <AnimatePresence>
-                    {filteredMembers.length > 0 ? (
-                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3.5">
-                        {filteredMembers.map((member) => (
+                    {members.length > 0 ? (
+                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-2">
+                        {members.map((member) => (
                           <MemberItemCard
                             key={member.id}
                             member={member}
@@ -419,53 +377,39 @@ export default function App() {
                       </div>
                     ) : (
                       <div className="text-center py-16 text-slate-400">
-                        <Users className="w-10 h-10 mx-auto opacity-30 mb-2 text-indigo-500" />
-                        <p className="text-xs font-bold text-slate-400">일치하는 부서원이 없습니다.</p>
-                        <p className="text-[10px] text-slate-400/80 mt-1">새 부서원을 추가하거나 검색어를 변경해주세요.</p>
+                        <Users className="w-9 h-9 mx-auto opacity-30 mb-2 text-indigo-500" />
+                        <p className="text-xs font-bold text-slate-500">등록된 부서원이 없습니다.</p>
+                        <p className="text-[10px] text-slate-400 mt-1">아래의 등록 버튼을 클릭해 추가해 주세요.</p>
                       </div>
                     )}
                   </AnimatePresence>
                 </div>
 
-                {/* Combined Navigation and Registration Toolbar at Bottom */}
-                <div className="pt-4 border-t border-slate-100 flex flex-wrap items-center justify-between gap-4 shrink-0 select-none">
-                  {/* Left: Add New Member & Bulk Reset/Clear */}
-                  <div className="flex flex-wrap items-center gap-2">
-                    <button
-                      id="btn-trigger-add-modal"
-                      onClick={() => setIsAddMemberModalOpen(true)}
-                      className="px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl shadow-sm flex items-center gap-1.5 cursor-pointer transition-all hover:scale-[1.02]"
-                    >
-                      <Plus className="w-4 h-4 text-emerald-400" />
-                      <span>부서원 등록</span>
-                    </button>
-                    <button
-                      onClick={handleResetToDefault}
-                      className="px-4 py-2.5 bg-slate-50 border border-slate-200 text-slate-600 hover:bg-slate-100 rounded-xl text-xs font-semibold flex items-center justify-center gap-1 transition-all cursor-pointer"
-                      title="기본 데모 부서원 목록으로 원복합니다."
-                    >
-                      <RotateCcw className="w-3.5 h-3.5 text-slate-500" />
-                      기본 초기화
-                    </button>
-                    <button
-                      onClick={handleClearAll}
-                      className="px-4 py-2.5 bg-red-50 border border-red-100 text-red-600 hover:bg-red-100/70 rounded-xl text-xs font-semibold flex items-center justify-center gap-1 transition-all cursor-pointer"
-                      title="모든 인원을 비웁니다."
-                    >
-                      <Trash2 className="w-3.5 h-3.5 text-red-500" />
-                      전체 삭제
-                    </button>
-                  </div>
-
-                  {/* Right: Proceed button */}
+                {/* Compact Toolbar at Bottom - fitting fully on a single line */}
+                <div className="pt-3 border-t border-slate-100 flex items-center justify-center gap-2.5 shrink-0 select-none">
                   <button
-                    onClick={() => setActiveStep(2)}
-                    className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-md hover:shadow-indigo-100 transition-all flex items-center gap-2 cursor-pointer hover:scale-[1.02]"
+                    id="btn-trigger-add-modal"
+                    onClick={() => setIsAddMemberModalOpen(true)}
+                    className="px-4 py-1.5 bg-slate-900 hover:bg-slate-800 text-white font-extrabold text-[11px] rounded-lg shadow-sm flex items-center gap-1 cursor-pointer transition-all hover:scale-[1.02]"
                   >
-                    <span>조 편성 조건 설정 및 추첨하러 가기</span>
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M9 5l7 7-7 7"></path>
-                    </svg>
+                    <Plus className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>등록</span>
+                  </button>
+                  <button
+                    onClick={handleResetToDefault}
+                    className="px-3 py-1.5 bg-slate-50 border border-slate-200 text-slate-605 hover:bg-slate-100 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1 transition-all cursor-pointer"
+                    title="기본 데모 부서원 목록으로 되돌려 놓습니다."
+                  >
+                    <RotateCcw className="w-3 h-3 text-slate-500" />
+                    <span>초기화</span>
+                  </button>
+                  <button
+                    onClick={handleClearAll}
+                    className="px-3 py-1.5 bg-red-50 border border-red-100 text-red-600 hover:bg-red-100/70 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1 transition-all cursor-pointer"
+                    title="모든 인원을 비웁니다."
+                  >
+                    <Trash2 className="w-3 h-3 text-red-500" />
+                    <span>전체삭제</span>
                   </button>
                 </div>
               </div>
