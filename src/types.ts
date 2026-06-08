@@ -9,6 +9,8 @@ export interface Member {
   photoUrl: string;
   role?: string;
   selected?: boolean; // True if included in the shuffle group, false if excluded
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface Group {

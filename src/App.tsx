@@ -28,6 +28,16 @@ import { Member, Group } from './types';
 import { DEFAULT_MEMBERS } from './data/defaultMembers';
 import AddMemberForm from './components/AddMemberForm';
 import MemberItemCard from './components/MemberItemCard';
+import {
+  collection,
+  onSnapshot,
+  setDoc,
+  doc,
+  deleteDoc,
+  updateDoc,
+  writeBatch
+} from 'firebase/firestore';
+import { db, authenticateApp, testConnection, handleFirestoreError, OperationType } from './firebase';
 
 function shuffleArray<T>(array: T[]): T[] {
   const arr = [...array];
@@ -39,18 +49,9 @@ function shuffleArray<T>(array: T[]): T[] {
 }
 
 export default function App() {
-  // Members State (Initialized from localStorage or default list)
-  const [members, setMembers] = useState<Member[]>(() => {
-    const saved = localStorage.getItem('dept_members');
-    if (saved) {
-      try {
-        return JSON.parse(saved) as Member[];
-      } catch (e) {
-        console.error('Failed to load saved members', e);
-      }
-    }
-    return DEFAULT_MEMBERS;
-  });
+  // Members State (Synchronized automatically with Firestore in Real-time)
+  const [members, setMembers] = useState<Member[]>([]);
+  const [isDbLoading, setIsDbLoading] = useState<boolean>(true);
 
   // Navigation active steps: 1 = Member setup / 2 = Shuffling & Results
   const [activeStep, setActiveStep] = useState<1 | 2>(1);
@@ -111,9 +112,101 @@ export default function App() {
   const [activeShuffleMember, setActiveShuffleMember] = useState<Member | null>(null);
   const [copied, setCopied] = useState(false);
 
-  // Sync to localStorage
+  // Real-time Cloud Synchronization of Members list across devices
   useEffect(() => {
-    localStorage.setItem('dept_members', JSON.stringify(members));
+    let unsubscribe: (() => void) | null = null;
+
+    async function initializeSync() {
+      try {
+        // 1. Silent anonymous login
+        await authenticateApp();
+        // 2. Fallback check
+        await testConnection();
+
+        const membersRef = collection(db, 'members');
+        
+        // Listen in real-time
+        unsubscribe = onSnapshot(
+          membersRef,
+          async (snapshot) => {
+            if (snapshot.empty) {
+              console.log('Firestore is empty. Seeding default team roster dynamically...');
+              const batch = writeBatch(db);
+              
+              DEFAULT_MEMBERS.forEach((m, idx) => {
+                const mId = m.id;
+                const docRef = doc(db, 'members', mId);
+                const isoNow = new Date(Date.now() - idx * 1000).toISOString();
+                
+                batch.set(docRef, {
+                  name: m.name,
+                  role: m.role || '부서원',
+                  photoUrl: m.photoUrl,
+                  selected: m.selected !== false,
+                  createdAt: isoNow,
+                  updatedAt: isoNow
+                });
+              });
+
+              try {
+                await batch.commit();
+              } catch (err) {
+                handleFirestoreError(err, OperationType.WRITE, 'members');
+              }
+              return;
+            }
+
+            // Sync from cloud
+            const loaded: Member[] = [];
+            snapshot.forEach((docSnap) => {
+              const data = docSnap.data();
+              loaded.push({
+                id: docSnap.id,
+                name: data.name || '',
+                role: data.role || '부서원',
+                photoUrl: data.photoUrl || '',
+                selected: data.selected !== false,
+                createdAt: data.createdAt || new Date().toISOString(),
+                updatedAt: data.updatedAt || new Date().toISOString(),
+              });
+            });
+
+            // Sort by createdAt desc so that newly registered members are at the top
+            const sorted = loaded.sort((a, b) => {
+              const dateA = a.createdAt || '';
+              const dateB = b.createdAt || '';
+              return dateB.localeCompare(dateA);
+            });
+
+            setMembers(sorted);
+            setIsDbLoading(false);
+          },
+          (err) => {
+            console.error('Firestore subscription error:', err);
+            handleFirestoreError(err, OperationType.LIST, 'members');
+            setIsDbLoading(false);
+          }
+        );
+      } catch (err) {
+        console.error('Failed to initialize sync:', err);
+        setIsDbLoading(false);
+      }
+    }
+
+    initializeSync();
+
+    return () => {
+      if (unsubscribe) {
+        unsubscribe();
+      }
+    };
+  }, []);
+
+  // Sync to localStorage as local offline backup
+  useEffect(() => {
+    if (members.length > 0) {
+      localStorage.setItem('dept_members', JSON.stringify(members));
+    }
   }, [members]);
 
   // Adjust group count boundary if member size changes
@@ -123,57 +216,124 @@ export default function App() {
     }
   }, [members.length, groupCount]);
 
-  // Toggle Single Member Selected State
-  const handleToggleSelect = (id: string) => {
-    setMembers((prev) =>
-      prev.map((m) =>
-        m.id === id ? { ...m, selected: m.selected === false ? true : false } : m
-      )
-    );
-  };
-
-  // Bulk Select / Deselect All
-  const handleToggleAll = (select: boolean) => {
-    setMembers((prev) =>
-      prev.map((m) => ({ ...m, selected: select }))
-    );
-  };
-
-  // Add Member
-  const handleAddMember = (newMeta: Omit<Member, 'id'>) => {
-    const newMember: Member = {
-      ...newMeta,
-      id: `custom-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-      selected: true, // Default to true
-    };
-    setMembers((prev) => [newMember, ...prev]);
-  };
-
-  // Delete Member
-  const handleDeleteMember = (id: string) => {
-    setMembers((prev) => prev.filter((m) => m.id !== id));
-  };
-
-  // Update Member
-  const handleUpdateMember = (id: string, updated: Omit<Member, 'id' | 'selected'>) => {
-    setMembers((prev) =>
-      prev.map((m) => (m.id === id ? { ...m, ...updated } : m))
-    );
-  };
-
-  // Reset to default roster list
-  const handleResetToDefault = () => {
-    if (window.confirm('부서원 명단을 처음에 제공된 기본 명단으로 초기화하시겠습니까? (추가하신 이력은 사라집니다)')) {
-      setMembers(DEFAULT_MEMBERS);
-      setGroups([]);
+  // Toggle Single Member Selected State with live Cloud Sync
+  const handleToggleSelect = async (id: string) => {
+    const target = members.find((m) => m.id === id);
+    if (!target) return;
+    try {
+      await updateDoc(doc(db, 'members', id), {
+        selected: target.selected === false,
+        updatedAt: new Date().toISOString(),
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `members/${id}`);
     }
   };
 
-  // Clear all members
-  const handleClearAll = () => {
-    if (window.confirm('모든 부서원 명단을 삭제하시겠습니까?')) {
-      setMembers([]);
-      setGroups([]);
+  // Bulk Select / Deselect All with live Cloud Sync
+  const handleToggleAll = async (select: boolean) => {
+    try {
+      const batch = writeBatch(db);
+      members.forEach((m) => {
+        batch.update(doc(db, 'members', m.id), {
+          selected: select,
+          updatedAt: new Date().toISOString(),
+        });
+      });
+      await batch.commit();
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, 'members');
+    }
+  };
+
+  // Add Member with live Cloud Sync
+  const handleAddMember = async (newMeta: Omit<Member, 'id'>) => {
+    const docId = `custom-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const isoNow = new Date().toISOString();
+    try {
+      await setDoc(doc(db, 'members', docId), {
+        name: newMeta.name,
+        role: newMeta.role || '부서원',
+        photoUrl: newMeta.photoUrl,
+        selected: true,
+        createdAt: isoNow,
+        updatedAt: isoNow,
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.CREATE, `members/${docId}`);
+    }
+  };
+
+  // Delete Member with live Cloud Sync
+  const handleDeleteMember = async (id: string) => {
+    try {
+      await deleteDoc(doc(db, 'members', id));
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `members/${id}`);
+    }
+  };
+
+  // Update Member with live Cloud Sync
+  const handleUpdateMember = async (id: string, updated: Omit<Member, 'id' | 'selected'>) => {
+    try {
+      await updateDoc(doc(db, 'members', id), {
+        name: updated.name,
+        role: updated.role || '부서원',
+        photoUrl: updated.photoUrl,
+        updatedAt: new Date().toISOString(),
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `members/${id}`);
+    }
+  };
+
+  // Reset to default roster list in Cloud
+  const handleResetToDefault = async () => {
+    if (window.confirm('부서원 명단을 처음에 제공된 기본 명단으로 초기화하시겠습니까? (현재 데이터는 덮어씌워지며, 연동된 모든 기기가 실시간 동기화됩니다)')) {
+      try {
+        const batch = writeBatch(db);
+        
+        // Delete all current members first
+        members.forEach((m) => {
+          batch.delete(doc(db, 'members', m.id));
+        });
+        
+        // Repopulate with default members
+        DEFAULT_MEMBERS.forEach((m, idx) => {
+          const mId = m.id;
+          const isoNow = new Date(Date.now() - idx * 1000).toISOString();
+          batch.set(doc(db, 'members', mId), {
+            name: m.name,
+            role: m.role || '부서원',
+            photoUrl: m.photoUrl,
+            selected: true,
+            createdAt: isoNow,
+            updatedAt: isoNow,
+          });
+        });
+
+        await batch.commit();
+        setGroups([]);
+        alert('부서원 목록이 원격 데이터베이스에 초기화되었습니다!');
+      } catch (err) {
+        handleFirestoreError(err, OperationType.WRITE, 'members');
+      }
+    }
+  };
+
+  // Clear all members in Cloud
+  const handleClearAll = async () => {
+    if (window.confirm('모든 부서원 명단을 영구적으로 삭제하시겠습니까? (연동된 모든 기기가 동시에 비워집니다)')) {
+      try {
+        const batch = writeBatch(db);
+        members.forEach((m) => {
+          batch.delete(doc(db, 'members', m.id));
+        });
+        await batch.commit();
+        setGroups([]);
+      } catch (err) {
+        handleFirestoreError(err, OperationType.WRITE, 'members');
+      }
     }
   };
 
@@ -197,21 +357,42 @@ export default function App() {
     }
   };
 
-  // Import backup list from a JSON file
-  const handleImportBackup = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Import backup list from a JSON file with live Cloud Sync
+  const handleImportBackup = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     const reader = new FileReader();
-    reader.onload = (event) => {
+    reader.onload = async (event) => {
       try {
         const result = event.target?.result as string;
         const parsed = JSON.parse(result);
         if (Array.isArray(parsed)) {
           const isValid = parsed.every(p => typeof p === 'object' && p !== null && 'name' in p);
           if (isValid) {
-            setMembers(parsed);
-            alert(`성공적으로 ${parsed.length}명의 부서원을 불러왔습니다! 실시간 저장이 완료되었습니다.`);
+            const batch = writeBatch(db);
+            
+            // Delete current
+            members.forEach((m) => {
+              batch.delete(doc(db, 'members', m.id));
+            });
+
+            // Write loaded ones
+            parsed.forEach((m, idx) => {
+              const mId = m.id || `custom-${Date.now()}-${idx}-${Math.random().toString(36).substr(2, 5)}`;
+              const isoNow = m.createdAt || new Date(Date.now() - idx * 1000).toISOString();
+              batch.set(doc(db, 'members', mId), {
+                name: m.name,
+                role: m.role || '부서원',
+                photoUrl: m.photoUrl || 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&h=150&fit=crop&crop=faces&q=80',
+                selected: m.selected !== false,
+                createdAt: isoNow,
+                updatedAt: m.updatedAt || isoNow,
+              });
+            });
+
+            await batch.commit();
+            alert(`성공적으로 ${parsed.length}명의 부서원을 불러와 원격 클라우드에 실시간 저장을 완료했습니다!`);
             setGroups([]);
           } else {
             alert('유효한 백업 파일 양식이 아닙니다. 부서원 목록이 정확히 들어있어야 합니다.');
@@ -400,10 +581,17 @@ export default function App() {
                       <span className="text-slate-300">|</span>
                       <span>제외 {members.filter(m => m.selected === false).length}명</span>
                       <span className="text-slate-300">|</span>
-                      <span className="text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded flex items-center gap-1 font-bold">
-                        <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></span>
-                        브라우저 자동 저장됨
-                      </span>
+                      {isDbLoading ? (
+                        <span className="text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded flex items-center gap-1 font-bold">
+                          <RefreshCw className="w-3 h-3 animate-spin text-amber-500" />
+                          실시간 클라우드 연결 중...
+                        </span>
+                      ) : (
+                        <span className="text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded flex items-center gap-1 font-bold">
+                          <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></span>
+                          실시간 기기 동기화 완료
+                        </span>
+                      )}
                     </div>
                   </div>
 

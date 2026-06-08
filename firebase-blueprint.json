@@ -1,0 +1,44 @@
+{
+  "entities": {
+    "Member": {
+      "title": "Member",
+      "description": "A member registered in the department roster.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Full name of the department member."
+        },
+        "role": {
+          "type": "string",
+          "description": "Position, title, or role of the member within the shuffle."
+        },
+        "photoUrl": {
+          "type": "string",
+          "description": "Unsplash or custom photo URL for the member avatar."
+        },
+        "selected": {
+          "type": "boolean",
+          "description": "Whether the member is currently selected to participate in the draw."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when the member was added."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when the member was last modified."
+        }
+      },
+      "required": ["name", "role", "photoUrl", "selected", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "members/{memberId}": {
+      "schema": "Member",
+      "description": "Roster of department members shared across devices in real-time."
+    }
+  }
+}
