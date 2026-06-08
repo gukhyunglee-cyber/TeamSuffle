@@ -31,7 +31,9 @@ import {
   Info,
   Copy,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  Menu,
+  X
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Member, Group, Department, AppUser } from './types';
@@ -169,6 +171,7 @@ export default function App() {
   const [shufflePhase, setShufflePhase] = useState<'idle' | 'preparing' | 'scrambling' | 'positioning' | 'completed'>('idle');
   const [activeShuffleMember, setActiveShuffleMember] = useState<Member | null>(null);
   const [copied, setCopied] = useState(false);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
 
   useEffect(() => {
     const handler = (e: Event) => {
@@ -385,22 +388,138 @@ export default function App() {
   const handleSaveFirebaseConfig = () => {
     try {
       setConfigStatus(null);
-      if (!customConfigInput.trim()) {
-        setConfigStatus({ type: 'error', message: 'Firebase Config JSON을 입력해 주세요.' });
+      const cleanedInput = customConfigInput.trim();
+      if (!cleanedInput) {
+        setConfigStatus({ type: 'error', message: 'Firebase Config 내용을 입력해 주세요.' });
         return;
       }
-      const parsed = JSON.parse(customConfigInput.trim());
-      if (!parsed.apiKey || !parsed.projectId) {
-        setConfigStatus({ type: 'error', message: '올바른 Firebase (JSON) 정보가 아닙니다. apiKey와 projectId가 포함되어 있는지 확인해 주세요.' });
+
+      let parsed: any = null;
+
+      // 1. Try standard JSON.parse first
+      try {
+        const directParsed = JSON.parse(cleanedInput);
+        if (directParsed && typeof directParsed === 'object') {
+          parsed = directParsed;
+        }
+      } catch (err) {
+        // If strict JSON.parse fails, it is likely a JavaScript object literal pasted from the Firebase console.
+        // We will fallback to a robust parser.
+        console.log("Strict JSON parsing failed, attempting smart JS-Object parsing...");
+      }
+
+      // 2. If standard parsing didn't work (or didn't yield an object), do regex-based smart parsing
+      if (!parsed) {
+        const extracted: any = {};
+        // Match both quoted and unquoted keys, e.g. apiKey: "value", "apiKey": 'value'
+        const regex = /(["'`a-zA-Z0-9_]+)\s*:\s*["'`]([^"'`]+)["'`]/g;
+        let match;
+        
+        while ((match = regex.exec(cleanedInput)) !== null) {
+          const rawKey = match[1].replace(/["'`\s]/g, '');
+          const value = match[2];
+          const keyLower = rawKey.toLowerCase();
+          
+          if (keyLower === 'apikey') extracted.apiKey = value;
+          else if (keyLower === 'authdomain') extracted.authDomain = value;
+          else if (keyLower === 'projectid') extracted.projectId = value;
+          else if (keyLower === 'storagebucket') extracted.storageBucket = value;
+          else if (keyLower === 'messagingsenderid') extracted.messagingSenderId = value;
+          else if (keyLower === 'appid') extracted.appId = value;
+          else if (keyLower === 'measurementid') extracted.measurementId = value;
+        }
+        
+        if (extracted.apiKey && extracted.projectId) {
+          parsed = extracted;
+        }
+      }
+
+      // 3. Fallback: line-by-line scanning if regex matched nothing
+      if (!parsed) {
+        const extracted: any = {};
+        const lines = cleanedInput.split('\n');
+        const knownKeys = ['apiKey', 'authDomain', 'projectId', 'storageBucket', 'messagingSenderId', 'appId', 'measurementId'];
+        
+        for (const line of lines) {
+          for (const key of knownKeys) {
+            const lowerKey = key.toLowerCase();
+            if (line.toLowerCase().includes(lowerKey)) {
+              // Get standard quotation content
+              const quotes = line.match(/["'`]([^"'`]+)["'`]/g);
+              if (quotes && quotes.length > 0) {
+                // Find first non-key quote value
+                for (const q of quotes) {
+                  const val = q.replace(/["'`]/g, '').trim();
+                  if (val !== key && val.toLowerCase() !== lowerKey) {
+                    extracted[key] = val;
+                    break;
+                  }
+                }
+              }
+            }
+          }
+        }
+        
+        // Handle lowercase appkey or apikey
+        if (!extracted.apiKey) {
+          for (const line of lines) {
+            if (line.toLowerCase().includes('apikey') || line.toLowerCase().includes('appkey')) {
+              const quotes = line.match(/["'`]([^"'`]+)["'`]/g);
+              if (quotes) {
+                for (const q of quotes) {
+                  const val = q.replace(/["'`]/g, '').trim();
+                  if (val.toLowerCase() !== 'apikey' && val.toLowerCase() !== 'appkey') {
+                    extracted.apiKey = val;
+                    break;
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        if (extracted.apiKey && extracted.projectId) {
+          parsed = extracted;
+        }
+      }
+
+      // Normalize key case format for saving (e.g. keyLower -> camelCase)
+      if (parsed && typeof parsed === 'object') {
+        const normalized: any = {};
+        const keys = Object.keys(parsed);
+        for (const k of keys) {
+          const kl = k.toLowerCase();
+          if (kl === 'apikey') normalized.apiKey = parsed[k];
+          else if (kl === 'authdomain') normalized.authDomain = parsed[k];
+          else if (kl === 'projectid') normalized.projectId = parsed[k];
+          else if (kl === 'storagebucket') normalized.storageBucket = parsed[k];
+          else if (kl === 'messagingsenderid') normalized.messagingSenderId = parsed[k];
+          else if (kl === 'appid') normalized.appId = parsed[k];
+          else if (kl === 'measurementid') normalized.measurementId = parsed[k];
+          else normalized[k] = parsed[k];
+        }
+        parsed = normalized;
+      }
+
+      // 4. Validate
+      if (!parsed || !parsed.apiKey || !parsed.projectId) {
+        setConfigStatus({ 
+          type: 'error', 
+          message: '올바른 Firebase 설정 정보형식이 아닙니다. apiKey와 projectId가 정확히 포함되어 있는지 확인해 주세요.' 
+        });
         return;
       }
+
       saveCustomFirebaseConfig(parsed);
-      setConfigStatus({ type: 'success', message: '설정이 성공적으로 저장되었습니다! 적용을 위해 1초 후 화면이 자동으로 새로고침됩니다.' });
+      setConfigStatus({ 
+        type: 'success', 
+        message: '설정이 성공적으로 저장되었습니다! 적용을 위해 1초 후 화면이 자동으로 새로고침됩니다.' 
+      });
       setTimeout(() => {
         window.location.reload();
       }, 1200);
     } catch (e: any) {
-      setConfigStatus({ type: 'error', message: '올바른 JSON 형식이 아닙니다: ' + e.message });
+      setConfigStatus({ type: 'error', message: '설정 파싱 또는 저장 중 오류가 발생했습니다: ' + e.message });
     }
   };
 
@@ -1319,6 +1438,317 @@ export default function App() {
     });
   };
 
+  // Render responsive Brand Header & Hamburger Menu
+  const renderNavbar = () => {
+    const isLoggedIn = !!currentUser && !!appUser;
+    const isApproved = appUser?.approved === true;
+    const isAdmin = appUser?.role === 'admin';
+
+    return (
+      <nav id="nav-header" className="h-16 bg-white border-b border-slate-200 px-5 md:px-8 flex items-center justify-between shadow-sm z-50 shrink-0 relative select-none">
+        {/* Brand logo */}
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center shadow-md shadow-indigo-100">
+            <div className="w-4 h-4 border-2 border-white rounded-sm"></div>
+          </div>
+          <span className="font-extrabold text-xl tracking-tight text-slate-800 font-display">
+            TeamShuffle
+          </span>
+        </div>
+
+        {/* --- DESKTOP VIEW NAV ITEMS (md and up) --- */}
+        <div className="hidden md:flex items-center gap-4 select-none">
+          {isLoggedIn && isApproved && (
+            <div className="flex items-center gap-2 select-none md:gap-3">
+              {showInstallBadge && (
+                <button
+                  onClick={handleInstallClick}
+                  className="px-3 py-1.5 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white rounded-xl text-[11px] font-bold flex items-center gap-1.5 transition-all shadow-sm hover:shadow-indigo-100 cursor-pointer hover:scale-[1.03]"
+                  title="TeamShuffle 스마트 앱 다운로드 및 홈 화면 추가"
+                >
+                  <Smartphone className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
+                  <span>앱 설치</span>
+                </button>
+              )}
+
+              <button
+                onClick={() => setActiveStep(1)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  activeStep === 1
+                    ? 'bg-indigo-50 text-indigo-600'
+                    : 'text-slate-400 hover:text-slate-600'
+                }`}
+              >
+                등록
+              </button>
+              <span className="text-slate-300 text-xs">➔</span>
+              <button
+                onClick={() => setActiveStep(2)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  activeStep === 2
+                    ? 'bg-indigo-50 text-indigo-600'
+                    : 'text-slate-400 hover:text-slate-600'
+                }`}
+              >
+                추첨
+              </button>
+
+              {isAdmin && (
+                <>
+                  <span className="text-slate-300 text-xs">➔</span>
+                  <button
+                    onClick={() => setActiveStep(3)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                      activeStep === 3
+                        ? 'bg-indigo-50 text-indigo-600'
+                        : 'text-slate-400 hover:text-slate-600'
+                    }`}
+                  >
+                    승인 관리
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* User profile action state (or compact login trigger) on desktop */}
+          {isLoggedIn ? (
+            <div className="flex items-center gap-2.5 border border-slate-200 pl-2 pr-3 py-1 rounded-full bg-slate-50 shadow-2xs select-none">
+              <img
+                src={appUser.photoUrl || 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=100&auto=format&fit=crop&q=80'}
+                alt={appUser.displayName}
+                referrerPolicy="no-referrer"
+                className="w-7 h-7 rounded-full border border-slate-300"
+              />
+              <div className="hidden sm:flex flex-col text-left">
+                <span className="text-[11px] font-extrabold text-slate-700 leading-none">
+                  {appUser.displayName}
+                </span>
+                <span className="text-[9px] font-bold text-indigo-600 mt-0.5 leading-none">
+                  {isAdmin ? '최고관리자' : isApproved ? '승인완료' : '승인대기'}
+                </span>
+              </div>
+              <button
+                onClick={handleLogoutAction}
+                className="hover:text-rose-600 font-extrabold text-[10px] text-slate-400 shrink-0 transition-colors ml-1 cursor-pointer pl-1.5 border-l border-slate-200"
+              >
+                로그아웃
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={handleGoogleLogin}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-3xs cursor-pointer transition-all active:scale-[0.98]"
+            >
+              로그인
+            </button>
+          )}
+        </div>
+
+        {/* --- MOBILE VIEW HAMBURGER TRIGGER --- */}
+        <div className="flex md:hidden items-center gap-2">
+          {showInstallBadge && !isLoggedIn && (
+            <button
+              onClick={handleInstallClick}
+              className="p-1 px-2.5 py-1 text-slate-500 hover:text-indigo-600 transition-colors text-[10px] font-bold bg-slate-50 border border-slate-200/60 rounded-lg flex items-center gap-1"
+              title="앱 설치"
+            >
+              <Smartphone className="w-3.5 h-3.5 text-emerald-500" />
+              <span>설치</span>
+            </button>
+          )}
+          <button
+            onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+            className="p-2 -mr-1 bg-slate-50 hover:bg-slate-100 rounded-xl text-slate-600 transition-colors cursor-pointer select-none border border-slate-200/50"
+            aria-label="모바일 메뉴"
+          >
+            {isMobileMenuOpen ? (
+              <X className="w-5 h-5 shrink-0 text-slate-600" />
+            ) : (
+              <Menu className="w-5 h-5 shrink-0 text-slate-600" />
+            )}
+          </button>
+        </div>
+
+        {/* --- MOBILE DROPDOWN HAMBURGER DRAWER SHEET PANEL --- */}
+        <AnimatePresence>
+          {isMobileMenuOpen && (
+            <motion.div
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.15 }}
+              className="absolute top-16 left-0 right-0 bg-white border-b border-slate-200/95 shadow-xl z-50 flex flex-col p-5 md:hidden gap-4"
+            >
+              {/* Profile Card Container inside Hamburger menu */}
+              {isLoggedIn ? (
+                <div className="flex items-center gap-3 p-3 bg-slate-50 border border-slate-200/85 rounded-2xl">
+                  <img
+                    src={appUser.photoUrl || 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=100&auto=format&fit=crop&q=80'}
+                    alt={appUser.displayName}
+                    referrerPolicy="no-referrer"
+                    className="w-10 h-10 rounded-full border border-slate-300 shrink-0"
+                  />
+                  <div className="flex-1 text-left min-w-0">
+                    <span className="text-xs font-extrabold text-slate-800 block truncate leading-tight">
+                      {appUser.displayName}
+                    </span>
+                    <span className="text-[10px] text-slate-400 font-bold block truncate mt-0.5 leading-none">
+                      {currentUser?.email || appUser?.email}
+                    </span>
+                    <span className="inline-flex mt-1.5 text-[8.5px] font-extrabold text-white bg-indigo-600 px-1.5 py-0.5 rounded-md leading-none tracking-wider select-none uppercase">
+                      {isAdmin ? '최고관리자 👑' : isApproved ? '승인완료 ✅' : '가입승인 대기 🔒'}
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                <div className="p-3.5 bg-slate-50 border border-dashed border-slate-200/80 rounded-2xl text-center">
+                  <p className="text-[11px] font-extrabold text-slate-500 leading-relaxed max-w-xs mx-auto text-center font-sans">
+                    🔒 공정 투명한 부서원 셔플 추첨기 사용을 위해 간편 구글 로그인을 완성해 주세요!
+                  </p>
+                </div>
+              )}
+
+              {/* Navigation Items in mobile layout */}
+              <div className="flex flex-col gap-1.5 text-left">
+                {isLoggedIn && isApproved ? (
+                  <>
+                    <button
+                      onClick={() => {
+                        setActiveStep(1);
+                        setIsMobileMenuOpen(false);
+                      }}
+                      className={`w-full flex items-center justify-between p-3 rounded-xl text-xs font-extrabold transition-all text-left ${
+                        activeStep === 1
+                          ? 'bg-indigo-50/80 text-indigo-600 border-l-4 border-indigo-600 pl-2.5'
+                          : 'text-slate-600 hover:bg-slate-50'
+                      }`}
+                    >
+                      <span className="flex items-center gap-2 font-bold font-sans">
+                        <Users className="w-4 h-4 shrink-0 text-slate-400" />
+                        <span>명단 및 부서 등록 관리</span>
+                      </span>
+                      <span className="text-[9px] font-bold text-slate-300">이동 ➔</span>
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        setActiveStep(2);
+                        setIsMobileMenuOpen(false);
+                      }}
+                      className={`w-full flex items-center justify-between p-3 rounded-xl text-xs font-extrabold transition-all text-left ${
+                        activeStep === 2
+                          ? 'bg-indigo-50/80 text-indigo-600 border-l-4 border-indigo-600 pl-2.5'
+                          : 'text-slate-600 hover:bg-slate-50'
+                      }`}
+                    >
+                      <span className="flex items-center gap-2 font-bold font-sans">
+                        <Shuffle className="w-4 h-4 shrink-0 text-slate-400" />
+                        <span>셔플 무작위 조 추첨</span>
+                      </span>
+                      <span className="text-[9px] font-bold text-slate-300">이동 ➔</span>
+                    </button>
+
+                    {isAdmin && (
+                      <button
+                        onClick={() => {
+                          setActiveStep(3);
+                          setIsMobileMenuOpen(false);
+                        }}
+                        className={`w-full flex items-center justify-between p-3 rounded-xl text-xs font-extrabold transition-all text-left ${
+                          activeStep === 3
+                            ? 'bg-indigo-50/80 text-indigo-600 border-l-4 border-indigo-600 pl-2.5'
+                            : 'text-slate-600 hover:bg-slate-50'
+                        }`}
+                      >
+                        <span className="flex items-center gap-2 text-indigo-650 font-bold font-sans">
+                          <Crown className="w-4 h-4 text-indigo-500 shrink-0" />
+                          <span>가입 유저 승인 및 권한 관리</span>
+                        </span>
+                        <span className="text-[9px] font-bold text-indigo-300">관리자 ➔</span>
+                      </button>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <div className="p-3 text-[11px] text-slate-400 font-bold flex items-center justify-between bg-slate-50/50 rounded-xl select-none border border-dashed border-slate-200">
+                      <span className="flex items-center gap-2 font-bold">
+                        <Users className="w-3.5 h-3.5 text-slate-300" />
+                        <span>명단 및 부서 등록</span>
+                      </span>
+                      <span className="text-[9px] text-slate-300">로그인 필요 🔒</span>
+                    </div>
+                    <div className="p-3 text-[11px] text-slate-400 font-bold flex items-center justify-between bg-slate-50/50 rounded-xl select-none border border-dashed border-slate-200">
+                      <span className="flex items-center gap-2 font-bold font-sans">
+                        <Shuffle className="w-3.5 h-3.5 text-slate-300" />
+                        <span>셔플 무작위 조 추첨</span>
+                      </span>
+                      <span className="text-[9px] text-slate-300">로그인 필요 🔒</span>
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {/* Action buttons and controls at bottom of mobile menu */}
+              <div className="flex flex-col gap-2 pt-3 border-t border-slate-100">
+                {showInstallBadge && (
+                  <button
+                    onClick={() => {
+                      handleInstallClick();
+                      setIsMobileMenuOpen(false);
+                    }}
+                    className="w-full flex items-center justify-center gap-2 py-3 bg-slate-50 border border-slate-200 hover:bg-slate-100 text-slate-700 text-xs font-extrabold rounded-xl transition-all cursor-pointer shadow-3xs"
+                  >
+                    <Smartphone className="w-4 h-4 text-emerald-500 shrink-0 animate-bounce" />
+                    <span>홈 화면에 스마트 앱 단축 아이콘 설치</span>
+                  </button>
+                )}
+
+                {isLoggedIn ? (
+                  <button
+                    onClick={() => {
+                      handleLogoutAction();
+                      setIsMobileMenuOpen(false);
+                    }}
+                    className="w-full py-3 bg-rose-50 hover:bg-rose-100 text-rose-600 text-xs font-extrabold rounded-xl border border-rose-100 transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-3xs font-sans"
+                  >
+                    <span>구글 계정 안전 로그아웃</span>
+                  </button>
+                ) : (
+                  <div className="flex flex-col gap-2.5">
+                    <button
+                      onClick={() => {
+                        handleGoogleLogin();
+                        setIsMobileMenuOpen(false);
+                      }}
+                      className="w-full py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99] font-sans"
+                    >
+                      {/* Integrated Google SVG Icon */}
+                      <svg className="w-4 h-4 shrink-0 fill-current" viewBox="0 0 24 24">
+                        <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#FFFFFF"/>
+                      </svg>
+                      <span>Google 계정으로 계속하기 (로그인)</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        handleGoogleRedirectLogin();
+                        setIsMobileMenuOpen(false);
+                      }}
+                      className="w-full py-2.5 text-indigo-600 hover:bg-indigo-50 text-[10.5px] font-extrabold rounded-xl transition-all flex items-center justify-center gap-1.5 border border-indigo-150 cursor-pointer font-sans"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5 shrink-0 text-indigo-500" />
+                      <span>팝업 연결 이슈 시 페이지 이동 로그인</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </nav>
+    );
+  };
+
   // 1. Loading screen
   if (isAuthLoading) {
     return (
@@ -1339,12 +1769,17 @@ export default function App() {
     const isInIframe = window.self !== window.top;
 
     return (
-      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center font-sans text-slate-900 p-4 select-none relative overflow-hidden">
-        {/* Ambient background decoration */}
-        <div className="absolute top-[-10%] right-[-10%] w-[45%] h-[45%] bg-indigo-50/50 rounded-full blur-3xl -z-10" />
-        <div className="absolute bottom-[-10%] left-[-10%] w-[45%] h-[45%] bg-violet-50/40 rounded-full blur-3xl -z-10" />
+      <div className="min-h-screen bg-slate-50 flex flex-col font-sans text-slate-900 select-none overflow-y-auto">
+        {/* Render responsive Brand Header & Hamburger Menu */}
+        {renderNavbar()}
 
-        <div className="w-full max-w-md bg-white border border-slate-200/90 rounded-3xl p-6 sm:p-8 shadow-2xl flex flex-col items-center text-center relative gap-5">
+        {/* Center content */}
+        <div className="flex-1 flex items-center justify-center p-4 relative overflow-hidden">
+          {/* Ambient background decoration */}
+          <div className="absolute top-[-10%] right-[-10%] w-[45%] h-[45%] bg-indigo-50/50 rounded-full blur-3xl -z-10" />
+          <div className="absolute bottom-[-10%] left-[-10%] w-[45%] h-[45%] bg-violet-50/40 rounded-full blur-3xl -z-10" />
+
+          <div className="w-full max-w-md bg-white border border-slate-200/90 rounded-3xl p-6 sm:p-8 shadow-2xl flex flex-col items-center text-center relative gap-5 my-8">
           <div className="flex flex-col items-center">
             <div className="w-12 h-12 bg-indigo-600 rounded-2xl flex items-center justify-center shadow-lg shadow-indigo-150 mb-4">
               <div className="w-6 h-6 border-3 border-white rounded-md"></div>
@@ -1597,18 +2032,24 @@ export default function App() {
           </div>
         </div>
       </div>
+    </div>
     );
   }
 
   // 3. User is not approved yet -> show Pending approval Screen
   if (appUser.approved !== true) {
     return (
-      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center font-sans text-slate-900 p-4 select-none relative overflow-hidden">
-        {/* Ambient background decoration */}
-        <div className="absolute top-[-10%] right-[-10%] w-[45%] h-[45%] bg-amber-50/40 rounded-full blur-3xl -z-10" />
-        <div className="absolute bottom-[-10%] left-[-10%] w-[45%] h-[45%] bg-indigo-50/30 rounded-full blur-3xl -z-10" />
+      <div className="min-h-screen bg-slate-50 flex flex-col font-sans text-slate-900 select-none overflow-y-auto">
+        {/* Render responsive Brand Header & Hamburger Menu */}
+        {renderNavbar()}
 
-        <div className="w-full max-w-md bg-white border border-slate-200/90 rounded-3xl p-6 sm:p-8 shadow-2xl flex flex-col items-center text-center relative">
+        {/* Center content */}
+        <div className="flex-1 flex items-center justify-center p-4 relative overflow-hidden">
+          {/* Ambient background decoration */}
+          <div className="absolute top-[-10%] right-[-10%] w-[45%] h-[45%] bg-amber-50/40 rounded-full blur-3xl -z-10" />
+          <div className="absolute bottom-[-10%] left-[-10%] w-[45%] h-[45%] bg-indigo-50/30 rounded-full blur-3xl -z-10" />
+
+          <div className="w-full max-w-md bg-white border border-slate-200/90 rounded-3xl p-6 sm:p-8 shadow-2xl flex flex-col items-center text-center relative my-8">
           {/* Pulsing Lock Icon */}
           <div className="w-14 h-14 bg-amber-50 border border-amber-100 rounded-full flex items-center justify-center mb-5 animate-bounce shadow-md">
             <Lock className="w-6 h-6 text-amber-500 fill-amber-50" />
@@ -1635,103 +2076,15 @@ export default function App() {
           </button>
         </div>
       </div>
+    </div>
     );
   }
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans text-slate-900 overflow-hidden select-none">
       
-      {/* 1. TOP BRAND NAVIGATION BAR */}
-      <nav id="nav-header" className="h-16 bg-white border-b border-slate-200 px-6 md:px-8 flex items-center justify-between shadow-sm z-10 shrink-0">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center shadow-md shadow-indigo-100">
-            <div className="w-4 h-4 border-2 border-white rounded-sm"></div>
-          </div>
-          <span className="font-extrabold text-xl tracking-tight text-slate-800 font-display">
-            TeamShuffle
-          </span>
-        </div>
-
-        {/* Dynamic Nav-based Step indicator & Custom User Profile Menu */}
-        <div className="flex items-center gap-4 flex-wrap select-none">
-          <div className="flex items-center gap-2 select-none md:gap-3">
-            {showInstallBadge && (
-              <button
-                onClick={handleInstallClick}
-                className="px-3 py-1.5 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white rounded-xl text-[11px] font-bold flex items-center gap-1.5 transition-all shadow-sm hover:shadow-indigo-100 cursor-pointer hover:scale-[1.03]"
-                title="TeamShuffle 스마트 앱 다운로드 및 홈 화면 추가"
-              >
-                <Smartphone className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
-                <span>앱 설치</span>
-              </button>
-            )}
-
-            <button
-              onClick={() => setActiveStep(1)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                activeStep === 1
-                  ? 'bg-indigo-50 text-indigo-600'
-                  : 'text-slate-400 hover:text-slate-600'
-              }`}
-            >
-              등록
-            </button>
-            <span className="text-slate-300 text-xs hidden sm:inline">➔</span>
-            <button
-              onClick={() => setActiveStep(2)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                activeStep === 2
-                  ? 'bg-indigo-50 text-indigo-600'
-                  : 'text-slate-400 hover:text-slate-600'
-              }`}
-            >
-              추첨
-            </button>
-
-            {appUser && appUser.role === 'admin' && (
-              <>
-                <span className="text-slate-300 text-xs hidden sm:inline">➔</span>
-                <button
-                  onClick={() => setActiveStep(3)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                    activeStep === 3
-                      ? 'bg-indigo-50 text-indigo-600'
-                      : 'text-slate-400 hover:text-slate-600'
-                  }`}
-                >
-                  승인 관리
-                </button>
-              </>
-            )}
-          </div>
-
-          {/* User Profile Pill & Sign-out button */}
-          {appUser && (
-            <div className="flex items-center gap-2.5 border border-slate-200 pl-2 pr-3 py-1 rounded-full bg-slate-50 shadow-2xs select-none">
-              <img
-                src={appUser.photoUrl || 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=100&auto=format&fit=crop&q=80'}
-                alt={appUser.displayName}
-                referrerPolicy="no-referrer"
-                className="w-7 h-7 rounded-full border border-slate-300"
-              />
-              <div className="hidden sm:flex flex-col text-left">
-                <span className="text-[11px] font-extrabold text-slate-700 leading-none">
-                  {appUser.displayName}
-                </span>
-                <span className="text-[9px] font-bold text-indigo-600 mt-0.5 leading-none">
-                  {appUser.role === 'admin' ? '최고관리자' : '승인완료'}
-                </span>
-              </div>
-              <button
-                onClick={handleLogoutAction}
-                className="hover:text-rose-600 font-extrabold text-[10px] text-slate-400 shrink-0 transition-colors ml-1 cursor-pointer pl-1.5 border-l border-slate-200"
-              >
-                로그아웃
-              </button>
-            </div>
-          )}
-        </div>
-      </nav>
+      {/* 1. TOP RESPONSIVE BRAND HEADER & HAMBURGER MENU */}
+      {renderNavbar()}
 
       {/* Main wizard body */}
       <div className="flex-1 overflow-hidden relative">
