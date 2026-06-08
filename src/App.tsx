@@ -20,7 +20,8 @@ import {
   HelpCircle,
   Plus,
   Download,
-  Smartphone
+  Smartphone,
+  Upload
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Member, Group } from './types';
@@ -166,6 +167,56 @@ export default function App() {
       setMembers([]);
       setGroups([]);
     }
+  };
+
+  // Export current list as a JSON file
+  const handleExportBackup = () => {
+    if (members.length === 0) {
+      alert('내보낼 부서원 데이터가 없습니다.');
+      return;
+    }
+    try {
+      const dataStr = JSON.stringify(members, null, 2);
+      const blob = new Blob([dataStr], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `teamshuffle_members_${new Date().toISOString().split('T')[0]}.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      alert('백업 파일 내보내기에 실패했습니다.');
+    }
+  };
+
+  // Import backup list from a JSON file
+  const handleImportBackup = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const result = event.target?.result as string;
+        const parsed = JSON.parse(result);
+        if (Array.isArray(parsed)) {
+          const isValid = parsed.every(p => typeof p === 'object' && p !== null && 'name' in p);
+          if (isValid) {
+            setMembers(parsed);
+            alert(`성공적으로 ${parsed.length}명의 부서원을 불러왔습니다! 실시간 저장이 완료되었습니다.`);
+            setGroups([]);
+          } else {
+            alert('유효한 백업 파일 양식이 아닙니다. 부서원 목록이 정확히 들어있어야 합니다.');
+          }
+        } else {
+          alert('부서원 배열 형식이 아니기 때문에 복원하지 못했습니다.');
+        }
+      } catch (err) {
+        alert('백업 데이터를 불러오는 중 오류가 발생했습니다. 올바른 파일인지 확인해 주세요.');
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = ''; // Reset input
   };
 
   // Shuffle & Divide algorithm with step animations (Filtering out deselected members)
@@ -340,6 +391,11 @@ export default function App() {
                       <span className="text-indigo-600">참가 {members.filter(m => m.selected !== false).length}명</span>
                       <span className="text-slate-300">|</span>
                       <span>제외 {members.filter(m => m.selected === false).length}명</span>
+                      <span className="text-slate-300">|</span>
+                      <span className="text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded flex items-center gap-1 font-bold">
+                        <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></span>
+                        브라우저 자동 저장됨
+                      </span>
                     </div>
                   </div>
 
@@ -385,19 +441,28 @@ export default function App() {
                   </AnimatePresence>
                 </div>
 
-                {/* Compact Toolbar at Bottom - fitting fully on a single line */}
-                <div className="pt-3 border-t border-slate-100 flex items-center justify-center gap-2.5 shrink-0 select-none">
+                {/* Compact Toolbar at Bottom - fitting fully on a single line with Backup & Restore supports */}
+                <div className="pt-3 border-t border-slate-100 flex flex-wrap items-center justify-center gap-2 shrink-0 select-none">
+                  {/* Hidden input for loading backup files */}
+                  <input
+                    id="import-backup-file"
+                    type="file"
+                    accept=".json"
+                    onChange={handleImportBackup}
+                    className="hidden"
+                  />
+
                   <button
                     id="btn-trigger-add-modal"
                     onClick={() => setIsAddMemberModalOpen(true)}
-                    className="px-4 py-1.5 bg-slate-900 hover:bg-slate-800 text-white font-extrabold text-[11px] rounded-lg shadow-sm flex items-center gap-1 cursor-pointer transition-all hover:scale-[1.02]"
+                    className="px-3.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white font-extrabold text-[11px] rounded-lg shadow-sm flex items-center gap-1 cursor-pointer transition-all hover:scale-[1.02]"
                   >
                     <Plus className="w-3.5 h-3.5 text-emerald-400" />
                     <span>등록</span>
                   </button>
                   <button
                     onClick={handleResetToDefault}
-                    className="px-3 py-1.5 bg-slate-50 border border-slate-200 text-slate-605 hover:bg-slate-100 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1 transition-all cursor-pointer"
+                    className="px-3 py-1.5 bg-slate-50 border border-slate-200 text-slate-600 hover:bg-slate-100 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1 transition-all cursor-pointer"
                     title="기본 데모 부서원 목록으로 되돌려 놓습니다."
                   >
                     <RotateCcw className="w-3 h-3 text-slate-500" />
@@ -410,6 +475,25 @@ export default function App() {
                   >
                     <Trash2 className="w-3 h-3 text-red-500" />
                     <span>전체삭제</span>
+                  </button>
+
+                  <span className="w-px h-4 bg-slate-200 hidden sm:inline" />
+
+                  <button
+                    onClick={handleExportBackup}
+                    className="px-3 py-1.5 bg-indigo-50 border border-indigo-150 text-indigo-700 hover:bg-indigo-100/50 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1 transition-all cursor-pointer"
+                    title="부서원 명단을 안전하게 PC/스마트폰에 파일로 받아놓습니다."
+                  >
+                    <Download className="w-3 h-3 text-indigo-600" />
+                    <span>명단 파일백업</span>
+                  </button>
+                  <button
+                    onClick={() => document.getElementById('import-backup-file')?.click()}
+                    className="px-3 py-1.5 bg-emerald-50 border border-emerald-150 text-emerald-850 hover:bg-emerald-100/50 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1 transition-all cursor-pointer"
+                    title="저장되었던 다운로드 파일(.json)을 불러와 복구합니다."
+                  >
+                    <Upload className="w-3 h-3 text-emerald-600" />
+                    <span>명단 파일인증/복구</span>
                   </button>
                 </div>
               </div>
@@ -447,13 +531,14 @@ export default function App() {
 
                 {/* Control Right: Small input configuration & Instant shuffle button horizontally aligned */}
                 <div className="flex items-center gap-3 shrink-0">
-                  {/* Compact small group picker */}
-                  <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg p-0.5 px-2">
-                    <span className="text-[10px] font-bold text-slate-400 select-none">조 개수:</span>
+                  {/* Compact small group picker - PC에서는 크게, 모바일에서는 적절하게 */}
+                  <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl p-1 px-3 md:p-1.5 md:px-5">
+                    <span className="text-[11px] md:text-sm font-black text-slate-700 select-none">조 개수:</span>
                     <button
+                      type="button"
                       onClick={() => setGroupCount((prev) => Math.max(1, prev - 1))}
                       disabled={groupCount <= 1}
-                      className="w-5 h-5 bg-white hover:bg-slate-100 disabled:opacity-40 rounded flex items-center justify-center font-bold text-[10px] text-slate-600 border border-slate-200/70 transition-colors cursor-pointer"
+                      className="w-6 h-6 md:w-9 md:h-9 bg-white hover:bg-slate-100 disabled:opacity-45 rounded-lg flex items-center justify-center font-extrabold text-xs md:text-base text-slate-600 border border-slate-200 transition-all cursor-pointer shadow-sm active:scale-95 shrink-0"
                     >
                       -
                     </button>
@@ -467,15 +552,28 @@ export default function App() {
                         const val = parseInt(e.target.value, 10);
                         const activeCount = members.filter(m => m.selected !== false).length;
                         if (!isNaN(val)) {
-                          setGroupCount(Math.min(Math.max(1, activeCount), Math.max(1, val)));
+                          setGroupCount(Math.min(Math.max(1, activeCount || 1), Math.max(1, val)));
+                        } else {
+                          // allow blank typing temporarily
+                          (e.target as any).value = '';
                         }
                       }}
-                      className="w-5 text-center font-bold text-[11px] text-slate-800 bg-transparent focus:outline-none"
+                      onBlur={(e) => {
+                        const val = parseInt(e.target.value, 10);
+                        const activeCount = members.filter(m => m.selected !== false).length;
+                        if (isNaN(val) || val < 1) {
+                          setGroupCount(3);
+                        } else {
+                          setGroupCount(Math.min(Math.max(1, activeCount || 1), val));
+                        }
+                      }}
+                      className="w-10 sm:w-16 md:w-28 h-6 md:h-9 text-center font-black text-xs md:text-base text-indigo-700 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all select-all bubble-input"
                     />
                     <button
+                      type="button"
                       onClick={() => setGroupCount((prev) => Math.min(members.filter(m => m.selected !== false).length, prev + 1))}
                       disabled={groupCount >= members.filter(m => m.selected !== false).length}
-                      className="w-5 h-5 bg-white hover:bg-slate-100 disabled:opacity-40 rounded flex items-center justify-center font-bold text-[10px] text-slate-600 border border-slate-200/70 transition-colors cursor-pointer"
+                      className="w-6 h-6 md:w-9 md:h-9 bg-white hover:bg-slate-100 disabled:opacity-45 rounded-lg flex items-center justify-center font-extrabold text-xs md:text-base text-slate-600 border border-slate-200 transition-all cursor-pointer shadow-sm active:scale-95 shrink-0"
                     >
                       +
                     </button>
