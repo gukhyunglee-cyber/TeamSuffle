@@ -106,8 +106,9 @@ let db: any;
 try {
   if (app) {
     db = firebaseConfig.firestoreDatabaseId
-      ? getFirestore(app, firebaseConfig.firestoreDatabaseId)
-      : getFirestore(app);
+      ? initializeFirestore(app, { experimentalForceLongPolling: true }, firebaseConfig.firestoreDatabaseId)
+      : initializeFirestore(app, { experimentalForceLongPolling: true });
+    console.log('Firebase Firestore successfully initialized with force-long-polling enabled.');
   }
 } catch (err) {
   console.error('getFirestore completely failed:', err);

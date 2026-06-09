@@ -13,7 +13,7 @@ service cloud.firestore {
     // Helper to check if signed-in user is authenticated & fully approved
     function isApproved() {
       return isSignedIn() && (
-        (request.auth.token.email != null && request.auth.token.email.lower() == 'gukhyunglee@gmail.com') || (
+        (request.auth.token.email != null && (request.auth.token.email == 'gukhyunglee@gmail.com' || request.auth.token.email == 'GukhyungLee@gmail.com')) || (
           exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.approved == true
         )
@@ -24,7 +24,7 @@ service cloud.firestore {
     // GukhyungLee@gmail.com is defined as the super admin
     function isSuperAdmin() {
       return isSignedIn() && (
-        (request.auth.token.email != null && request.auth.token.email.lower() == 'gukhyunglee@gmail.com') || (
+        (request.auth.token.email != null && (request.auth.token.email == 'gukhyunglee@gmail.com' || request.auth.token.email == 'GukhyungLee@gmail.com')) || (
           exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'
         )

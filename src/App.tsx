@@ -1294,8 +1294,10 @@ export default function App() {
         const errMsg = err?.message || '';
         if (errMsg.includes('permission-denied') || errMsg.includes('Missing or insufficient permissions')) {
           alert('🔒 서버 귀속 오류:\n\n가입 승인이 아직 완료되지 않은 일반 회원이거나 수정 권한이 없습니다. 최고관리자(gukhyunglee@gmail.com)에게 가입 승인을 요청하신 후 다시 시도해 주세요.\n\n(안내: 브라우저 임시 저장소에는 안전하게 등록되었으므로 이 컴퓨터에서는 중단 없이 사용 가능합니다!)');
+        } else if (errMsg.includes('Timeout') || errMsg.includes('시간 초과') || errMsg.includes('timeout')) {
+          alert('⚠️ 서버 응답 시간 초과 (Timeout):\n\n현재 원격 서버와의 통신 지연으로 가용한 직접 전송이 중단되었습니다. 하지만 작성하신 명단은 사용 중이신 브라우저 안전 저장소(LocalStorage)에 실시간으로 자동 완벽 백업되어 있으므로, 새로고침이나 컴퓨터를 껐다 켜도 데이터가 전혀 유실되지 않고 그대로 유지됩니다!\n\n💡 해결 팁:\n1. sandbox iframe 내에서는 간혹 소켓 연결이 차단될 수 있습니다. 화면 상단 또는 브라우저의 새 창(새 탭) 열기 버튼을 클릭하여 전체 화면으로 앱을 접속해 저장을 시도해보세요.\n2. 혹은 네트워크 상태가 원활해지면 다시 [서버에 저장] 버튼을 누르시면 정상 반영됩니다.');
         } else {
-          alert(`서버 저장 실패: ${err.message || err}`);
+          alert(`⚠️ 서버 저장 일시 지연 (${err.message || err}):\n\n현재 클라우드 전송에 실패하였습니다. 데이터는 유실되지 않고 브라우저 임시 로컬 보관소에 안전하게 자동 저장되었습니다!`);
         }
       } finally {
         setIsSavingToServer(false);
