@@ -67,8 +67,8 @@ function shuffleArray<T>(array: T[]): T[] {
   return arr;
 }
 
-// Helper to wrap Firestore Promises with an absolute timeout limit (2.5 seconds) to prevent infinite pending locks
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number = 2500): Promise<T> {
+// Helper to wrap Firestore Promises with an absolute timeout limit (15 seconds) to prevent infinite pending locks
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number = 15000): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => {
       reject(new Error('네트워크 응답 시간 초과 (Timeout)'));
@@ -1264,7 +1264,7 @@ export default function App() {
         // 1. Fetch existing roster documents for this department from Firestore and queue deletion and replacement
         const membersRef = collection(db, 'members');
         const q = query(membersRef, where('departmentId', '==', selectedDeptId));
-        const querySnapshot = await getDocs(q);
+        const querySnapshot = await withTimeout(getDocs(q), 20000);
         querySnapshot.forEach((doc) => {
           batch.delete(doc.ref);
         });
@@ -1283,7 +1283,7 @@ export default function App() {
           });
         });
 
-        await withTimeout(batch.commit());
+        await withTimeout(batch.commit(), 30000);
 
         // Reset unsaved changes on successful batch commit
         updateHasUnsavedChanges(false);
