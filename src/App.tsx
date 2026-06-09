@@ -33,7 +33,9 @@ import {
   ChevronDown,
   ChevronUp,
   Menu,
-  X
+  X,
+  Cloud,
+  Save
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Member, Group, Department, AppUser } from './types';
@@ -48,7 +50,10 @@ import {
   doc,
   deleteDoc,
   updateDoc,
-  writeBatch
+  writeBatch,
+  query,
+  where,
+  getDocs
 } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
 import { db, auth, loginWithGoogle, loginWithGoogleRedirect, logout, authenticateApp, testConnection, handleFirestoreError, OperationType, safeStorage } from './firebase';
@@ -133,6 +138,16 @@ export default function App() {
   const [isDbLoading, setIsDbLoading] = useState<boolean>(() => {
     return safeStorage.getItem('force_offline_mode') !== 'true';
   });
+
+  // Track draft unsaved list edits
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState<boolean>(false);
+  const hasUnsavedChangesRef = React.useRef<boolean>(false);
+  const [isSavingToServer, setIsSavingToServer] = useState<boolean>(false);
+
+  const updateHasUnsavedChanges = (val: boolean) => {
+    setHasUnsavedChanges(val);
+    hasUnsavedChangesRef.current = val;
+  };
 
   // Navigation active steps: 1 = Member setup / 2 = Shuffling & Results / 3 = Users Management (Admin)
   const [activeStep, setActiveStep] = useState<1 | 2 | 3>(1);
@@ -779,6 +794,10 @@ export default function App() {
 
         // 2. Snapshot for Members
         unsubscribeMembers = onSnapshot(membersRef, (memberSnap) => {
+          if (hasUnsavedChangesRef.current) {
+            console.log('Skipping member snapshot update to prevent overwriting unsaved local roster edits.');
+            return;
+          }
           const loadedMembers: Member[] = [];
           memberSnap.forEach((docSnap) => {
             const data = docSnap.data();
@@ -1019,63 +1038,24 @@ export default function App() {
     const target = members.find((m) => m.id === id);
     if (!target) return;
 
-    if (isOfflineMode) {
-      setMembers((prev) =>
-        prev.map((m) =>
-          m.id === id ? { ...m, selected: m.selected === false, updatedAt: new Date().toISOString() } : m
-        )
-      );
-      return;
-    }
-
-    try {
-      await withTimeout(updateDoc(doc(db, 'members', id), {
-        selected: target.selected === false,
-        updatedAt: new Date().toISOString(),
-      }));
-    } catch (err) {
-      console.warn('Firestore toggle select failed:', err);
-      setIsOfflineMode(true);
-      setMembers((prev) =>
-        prev.map((m) =>
-          m.id === id ? { ...m, selected: m.selected === false, updatedAt: new Date().toISOString() } : m
-        )
-      );
-    }
+    setMembers((prev) =>
+      prev.map((m) =>
+        m.id === id ? { ...m, selected: m.selected === false, updatedAt: new Date().toISOString() } : m
+      )
+    );
+    updateHasUnsavedChanges(true);
   };
 
   // Bulk Select / Deselect All for active department
   const handleToggleAll = async (select: boolean) => {
     if (!selectedDeptId) return;
 
-    // We do not lock selection states with password since it is just utility config for Shuffle.
-    if (isOfflineMode) {
-      setMembers((prev) =>
-        prev.map((m) =>
-          m.departmentId === selectedDeptId ? { ...m, selected: select, updatedAt: new Date().toISOString() } : m
-        )
-      );
-      return;
-    }
-
-    try {
-      const batch = writeBatch(db);
-      filteredMembers.forEach((m) => {
-        batch.update(doc(db, 'members', m.id), {
-          selected: select,
-          updatedAt: new Date().toISOString(),
-        });
-      });
-      await withTimeout(batch.commit());
-    } catch (err) {
-      console.warn('Firestore bulk select failed:', err);
-      setIsOfflineMode(true);
-      setMembers((prev) =>
-        prev.map((m) =>
-          m.departmentId === selectedDeptId ? { ...m, selected: select, updatedAt: new Date().toISOString() } : m
-        )
-      );
-    }
+    setMembers((prev) =>
+      prev.map((m) =>
+        m.departmentId === selectedDeptId ? { ...m, selected: select, updatedAt: new Date().toISOString() } : m
+      )
+    );
+    updateHasUnsavedChanges(true);
   };
 
   // Add Member to selected department (Requires password verification check first)
@@ -1089,45 +1069,17 @@ export default function App() {
       const docId = `custom-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
       const isoNow = new Date().toISOString();
 
-      if (isOfflineMode) {
-        const newMember: Member = {
-          ...newMeta,
-          id: docId,
-          departmentId: selectedDeptId,
-          selected: true,
-          createdAt: isoNow,
-          updatedAt: isoNow,
-        };
-        setMembers((prev) => [newMember, ...prev]);
-        setIsAddMemberModalOpen(false);
-        return;
-      }
-
-      try {
-        await withTimeout(setDoc(doc(db, 'members', docId), {
-          departmentId: selectedDeptId,
-          name: newMeta.name,
-          role: newMeta.role || '부서원',
-          photoUrl: newMeta.photoUrl,
-          selected: true,
-          createdAt: isoNow,
-          updatedAt: isoNow,
-        }));
-        setIsAddMemberModalOpen(false);
-      } catch (err) {
-        console.warn('Firestore add member failed:', err);
-        setIsOfflineMode(true);
-        const newMember: Member = {
-          ...newMeta,
-          id: docId,
-          departmentId: selectedDeptId,
-          selected: true,
-          createdAt: isoNow,
-          updatedAt: isoNow,
-        };
-        setMembers((prev) => [newMember, ...prev]);
-        setIsAddMemberModalOpen(false);
-      }
+      const newMember: Member = {
+        ...newMeta,
+        id: docId,
+        departmentId: selectedDeptId,
+        selected: true,
+        createdAt: isoNow,
+        updatedAt: isoNow,
+      };
+      setMembers((prev) => [newMember, ...prev]);
+      setIsAddMemberModalOpen(false);
+      updateHasUnsavedChanges(true);
     };
 
     checkPasswordAuth(selectedDeptId, action);
@@ -1138,18 +1090,8 @@ export default function App() {
     if (!selectedDeptId) return;
 
     const action = async () => {
-      if (isOfflineMode) {
-        setMembers((prev) => prev.filter((m) => m.id !== id));
-        return;
-      }
-
-      try {
-        await withTimeout(deleteDoc(doc(db, 'members', id)));
-      } catch (err) {
-        console.warn('Firestore delete failed:', err);
-        setIsOfflineMode(true);
-        setMembers((prev) => prev.filter((m) => m.id !== id));
-      }
+      setMembers((prev) => prev.filter((m) => m.id !== id));
+      updateHasUnsavedChanges(true);
     };
 
     checkPasswordAuth(selectedDeptId, action);
@@ -1160,30 +1102,11 @@ export default function App() {
     if (!selectedDeptId) return;
 
     const action = async () => {
-      if (isOfflineMode) {
-        setMembers((prev) =>
-          prev.map((m) => (m.id === id ? { ...m, ...updated, updatedAt: new Date().toISOString() } : m))
-        );
-        setIsAddMemberModalOpen(false);
-        return;
-      }
-
-      try {
-        await withTimeout(updateDoc(doc(db, 'members', id), {
-          name: updated.name,
-          role: updated.role || '부서원',
-          photoUrl: updated.photoUrl,
-          updatedAt: new Date().toISOString(),
-        }));
-        setIsAddMemberModalOpen(false);
-      } catch (err) {
-        console.warn('Firestore update failed:', err);
-        setIsOfflineMode(true);
-        setMembers((prev) =>
-          prev.map((m) => (m.id === id ? { ...m, ...updated, updatedAt: new Date().toISOString() } : m))
-        );
-        setIsAddMemberModalOpen(false);
-      }
+      setMembers((prev) =>
+        prev.map((m) => (m.id === id ? { ...m, ...updated, updatedAt: new Date().toISOString() } : m))
+      );
+      setIsAddMemberModalOpen(false);
+      updateHasUnsavedChanges(true);
     };
 
     checkPasswordAuth(selectedDeptId, action);
@@ -1205,54 +1128,21 @@ export default function App() {
         return isTech === isTargetTech;
       });
 
-      if (isOfflineMode) {
-        const resetData = baseMembers.map((m, idx) => ({
-          ...m,
-          departmentId: selectedDeptId,
-          selected: true,
-          createdAt: new Date(Date.now() - idx * 1000).toISOString(),
-          updatedAt: new Date().toISOString(),
-        }));
-        setMembers(prev => [
-          ...prev.filter(m => m.departmentId !== selectedDeptId),
-          ...resetData
-        ]);
-        setGroups([]);
-        alert('이 브라우저 로컬 캐시 명단이 성공적으로 초기화되었습니다.');
-        return;
-      }
+      const resetData = baseMembers.map((m, idx) => ({
+        ...m,
+        departmentId: selectedDeptId,
+        selected: true,
+        createdAt: new Date(Date.now() - idx * 1000).toISOString(),
+        updatedAt: new Date().toISOString(),
+      }));
 
-      try {
-        const batch = writeBatch(db);
-        
-        // Delete only current department members
-        filteredMembers.forEach((m) => {
-          batch.delete(doc(db, 'members', m.id));
-        });
-        
-        // Repopulate with allocated defaults
-        baseMembers.forEach((m, idx) => {
-          const mId = `custom-${selectedDeptId}-${m.id}-${Date.now()}`;
-          const isoNow = new Date(Date.now() - idx * 1000).toISOString();
-          batch.set(doc(db, 'members', mId), {
-            departmentId: selectedDeptId,
-            name: m.name,
-            role: m.role || '부서원',
-            photoUrl: m.photoUrl,
-            selected: true,
-            createdAt: isoNow,
-            updatedAt: isoNow,
-          });
-        });
-
-        await withTimeout(batch.commit());
-        setGroups([]);
-        alert('부서원 명단이 원격 클라우드에 성공적으로 리셋되었습니다!');
-      } catch (err) {
-        console.warn('Firestore reset failed:', err);
-        setIsOfflineMode(true);
-        alert('네트워크 또는 권한 비활성화로 로컬 수준에서만 복구 처리되었습니다.');
-      }
+      setMembers(prev => [
+        ...prev.filter(m => m.departmentId !== selectedDeptId),
+        ...resetData
+      ]);
+      setGroups([]);
+      updateHasUnsavedChanges(true);
+      alert('현재 부서원 명단을 기본 데모 목록으로 초기화했습니다. (변경 사항을 전체 보존하려면 화면 상단 또는 툴바의 [서버에 저장] 버튼을 눌러주세요.)');
     };
 
     checkPasswordAuth(selectedDeptId, action);
@@ -1267,25 +1157,10 @@ export default function App() {
         return;
       }
 
-      if (isOfflineMode) {
-        setMembers((prev) => prev.filter((m) => m.departmentId !== selectedDeptId));
-        setGroups([]);
-        return;
-      }
-
-      try {
-        const batch = writeBatch(db);
-        filteredMembers.forEach((m) => {
-          batch.delete(doc(db, 'members', m.id));
-        });
-        await withTimeout(batch.commit());
-        setGroups([]);
-      } catch (err) {
-        console.warn('Firestore clear all failed:', err);
-        setIsOfflineMode(true);
-        setMembers((prev) => prev.filter((m) => m.departmentId !== selectedDeptId));
-        setGroups([]);
-      }
+      setMembers((prev) => prev.filter((m) => m.departmentId !== selectedDeptId));
+      setGroups([]);
+      updateHasUnsavedChanges(true);
+      alert('현재 부서의 명단을 모두 비웠습니다. (변경 사항을 보존하려면 하단 툴바의 [서버에 저장] 버튼을 눌러주세요.)');
     };
 
     checkPasswordAuth(selectedDeptId, action);
@@ -1327,55 +1202,25 @@ export default function App() {
           if (Array.isArray(parsed)) {
             const isValid = parsed.every(p => typeof p === 'object' && p !== null && 'name' in p);
             if (isValid) {
-              if (isOfflineMode) {
-                const updatedList = parsed.map((m, idx) => ({
-                  ...m,
-                  id: m.id || `custom-${selectedDeptId}-${Date.now()}-${idx}`,
-                  departmentId: selectedDeptId,
-                  createdAt: m.createdAt || new Date().toISOString(),
-                  updatedAt: new Date().toISOString(),
-                }));
+              const updatedList = parsed.map((m, idx) => ({
+                ...m,
+                id: m.id || `custom-${selectedDeptId}-${Date.now()}-${idx}-${Math.random().toString(36).substr(2, 5)}`,
+                departmentId: selectedDeptId,
+                selected: m.selected !== false,
+                role: m.role || '부서원',
+                photoUrl: m.photoUrl || 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&h=150&fit=crop&crop=faces&q=80',
+                createdAt: m.createdAt || new Date(Date.now() - idx * 1000).toISOString(),
+                updatedAt: new Date().toISOString(),
+              }));
 
-                setMembers(prev => [
-                  ...prev.filter(m => m.departmentId !== selectedDeptId),
-                  ...updatedList
-                ]);
-                alert(`성공적으로 ${parsed.length}명의 부서원을 불러왔습니다!`);
-                setGroups([]);
-                return;
-              }
+              setMembers(prev => [
+                ...prev.filter(m => m.departmentId !== selectedDeptId),
+                ...updatedList
+              ]);
 
-              try {
-                const batch = writeBatch(db);
-                
-                // Delete active
-                filteredMembers.forEach((m) => {
-                  batch.delete(doc(db, 'members', m.id));
-                });
-
-                // Write loaded ones
-                parsed.forEach((m, idx) => {
-                  const mId = m.id || `custom-${selectedDeptId}-${Date.now()}-${idx}-${Math.random().toString(36).substr(2, 5)}`;
-                  const isoNow = m.createdAt || new Date(Date.now() - idx * 1000).toISOString();
-                  batch.set(doc(db, 'members', mId), {
-                    departmentId: selectedDeptId,
-                    name: m.name,
-                    role: m.role || '부서원',
-                    photoUrl: m.photoUrl || 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&h=150&fit=crop&crop=faces&q=80',
-                    selected: m.selected !== false,
-                    createdAt: isoNow,
-                    updatedAt: m.updatedAt || isoNow,
-                  });
-                });
-
-                await withTimeout(batch.commit());
-                alert(`성공적으로 ${parsed.length}명의 부서원을 동기화하였습니다!`);
-                setGroups([]);
-              } catch (err) {
-                console.warn('Firestore import backup failed:', err);
-                setIsOfflineMode(true);
-                alert('네트워크 유실로 임시 로컬 캐시에 백업 복원되었습니다.');
-              }
+              updateHasUnsavedChanges(true);
+              alert(`성공적으로 백업 파일에서 ${parsed.length}명의 부서원 정보를 장바구니에 불러왔습니다!\n\n(참고: 이를 클라우드 서버에 영구 영사하려면 툴바의 [서버에 저장] 버튼을 누르시면 됩니다.)`);
+              setGroups([]);
             } else {
               alert('유효한 백업 파일 양식이 아닙니다. 부서원 목록이 정확히 들어있어야 합니다.');
             }
@@ -1388,6 +1233,73 @@ export default function App() {
       };
       reader.readAsText(file);
       e.target.value = '';
+    };
+
+    checkPasswordAuth(selectedDeptId, action);
+  };
+
+  // Explicit Save / Synchronize current active department roster list to Cloud Firestore server on-demand
+  const handleSaveToServer = async () => {
+    if (!selectedDeptId) {
+      alert('저장할 부서를 선택해 주세요.');
+      return;
+    }
+
+    const action = async () => {
+      setIsSavingToServer(true);
+      try {
+        await authenticateApp();
+        const currentUser = auth.currentUser;
+        if (!currentUser) {
+          alert('구글 계정으로 로그인되어 있어야 서버에 안전하게 영구 저장이 가능합니다. 화면 상단의 [로그인] 버튼을 활용해 로그인해 주세요.');
+          setIsSavingToServer(false);
+          return;
+        }
+
+        // Filter local members belonging to the active selected department
+        const targetMembers = members.filter(m => m.departmentId === selectedDeptId);
+
+        const batch = writeBatch(db);
+
+        // 1. Fetch existing roster documents for this department from Firestore and queue deletion and replacement
+        const membersRef = collection(db, 'members');
+        const q = query(membersRef, where('departmentId', '==', selectedDeptId));
+        const querySnapshot = await getDocs(q);
+        querySnapshot.forEach((doc) => {
+          batch.delete(doc.ref);
+        });
+
+        // 2. Set all current local members to Firestore batch
+        targetMembers.forEach((m) => {
+          const mRef = doc(db, 'members', m.id);
+          batch.set(mRef, {
+            departmentId: selectedDeptId,
+            name: m.name,
+            role: m.role || '부서원',
+            photoUrl: m.photoUrl || 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&h=150&fit=crop&crop=faces&q=80',
+            selected: m.selected !== false,
+            createdAt: m.createdAt || new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          });
+        });
+
+        await withTimeout(batch.commit());
+
+        // Reset unsaved changes on successful batch commit
+        updateHasUnsavedChanges(false);
+        setIsOfflineMode(false); // Restore live database sync cleanly
+        alert('🎉 성공적으로 부서원 명단이 원격 클라우드 서버에 안전하게 저장 및 실시간 동기화되었습니다!');
+      } catch (err: any) {
+        console.error('Firestore save failed:', err);
+        const errMsg = err?.message || '';
+        if (errMsg.includes('permission-denied') || errMsg.includes('Missing or insufficient permissions')) {
+          alert('🔒 서버 귀속 오류:\n\n가입 승인이 아직 완료되지 않은 일반 회원이거나 수정 권한이 없습니다. 최고관리자(gukhyunglee@gmail.com)에게 가입 승인을 요청하신 후 다시 시도해 주세요.\n\n(안내: 브라우저 임시 저장소에는 안전하게 등록되었으므로 이 컴퓨터에서는 중단 없이 사용 가능합니다!)');
+        } else {
+          alert(`서버 저장 실패: ${err.message || err}`);
+        }
+      } finally {
+        setIsSavingToServer(false);
+      }
     };
 
     checkPasswordAuth(selectedDeptId, action);
@@ -2220,6 +2132,12 @@ service cloud.firestore {
                       <span className="text-[10px] bg-slate-100 text-slate-500 font-bold px-1.5 py-0.5 rounded-md">
                         {filteredMembers.length}명
                       </span>
+                      {hasUnsavedChanges && (
+                        <span className="text-[9px] sm:text-[10px] bg-amber-500 text-white font-extrabold px-1.5 py-0.5 rounded-full flex items-center gap-0.5 animate-pulse shadow-sm">
+                          <AlertTriangle className="w-2.5 h-2.5" />
+                          <span>미저장</span>
+                        </span>
+                      )}
                     </h3>
                     <div className="hidden sm:flex items-center gap-2 text-[10px] text-slate-400 font-semibold select-none shrink-0">
                       <span className="text-indigo-600">참가 {filteredMembers.filter(m => m.selected !== false).length}명</span>
@@ -2350,6 +2268,26 @@ service cloud.firestore {
                   >
                     <Plus className="w-3.5 h-3.5 text-emerald-400" />
                     <span>팀원 등록</span>
+                  </button>
+                  <button
+                    onClick={handleSaveToServer}
+                    disabled={isSavingToServer}
+                    className={`px-3.5 py-1.5 font-extrabold text-[11px] rounded-lg shadow-sm flex items-center gap-1 cursor-pointer relative transition-all hover:scale-[1.02] ${
+                      hasUnsavedChanges 
+                        ? 'bg-blue-600 hover:bg-blue-700 text-white animate-pulse' 
+                        : 'bg-slate-100 hover:bg-slate-200 text-slate-600 border border-slate-200'
+                    }`}
+                    title={hasUnsavedChanges ? "수정된 명단이 있습니다. 클릭하여 서버에 영구적으로 보관하세요!" : "현재 명단이 서버와 최신 상태에 있습니다."}
+                  >
+                    {isSavingToServer ? (
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin text-white" />
+                    ) : (
+                      <Cloud className={`w-3.5 h-3.5 ${hasUnsavedChanges ? 'text-blue-100' : 'text-slate-400'}`} />
+                    )}
+                    <span>{isSavingToServer ? '서버 저장 중...' : '서버에 저장'}</span>
+                    {hasUnsavedChanges && (
+                      <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-rose-500 border border-white shadow-xs" />
+                    )}
                   </button>
                   <button
                     onClick={handleResetToDefault}
