@@ -142,6 +142,7 @@ export default function App() {
   // Track draft unsaved list edits
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState<boolean>(false);
   const hasUnsavedChangesRef = React.useRef<boolean>(false);
+  const deletedMemberIdsRef = React.useRef<string[]>([]);
   const [isSavingToServer, setIsSavingToServer] = useState<boolean>(false);
 
   const updateHasUnsavedChanges = (val: boolean) => {
@@ -1090,6 +1091,9 @@ export default function App() {
     if (!selectedDeptId) return;
 
     const action = async () => {
+      if (!deletedMemberIdsRef.current.includes(id)) {
+        deletedMemberIdsRef.current.push(id);
+      }
       setMembers((prev) => prev.filter((m) => m.id !== id));
       updateHasUnsavedChanges(true);
     };
@@ -1120,6 +1124,13 @@ export default function App() {
       if (!window.confirm('현재 부서원 명단이 기본 명단으로 덮어써집니다. 계속하시겠습니까?')) {
         return;
       }
+
+      // Record existing members of this department for server deletion
+      filteredMembers.forEach((m) => {
+        if (!deletedMemberIdsRef.current.includes(m.id)) {
+          deletedMemberIdsRef.current.push(m.id);
+        }
+      });
 
       // Prepare dev team vs strategy team default mapping
       const baseMembers = DEFAULT_MEMBERS.filter(m => {
@@ -1156,6 +1167,13 @@ export default function App() {
       if (!window.confirm('현재 부서의 모든 부서원이 영구적으로 삭제됩니다. 정말 삭제하시겠습니까?')) {
         return;
       }
+
+      // Record existing members of this department for server deletion
+      filteredMembers.forEach((m) => {
+        if (!deletedMemberIdsRef.current.includes(m.id)) {
+          deletedMemberIdsRef.current.push(m.id);
+        }
+      });
 
       setMembers((prev) => prev.filter((m) => m.departmentId !== selectedDeptId));
       setGroups([]);
@@ -1213,6 +1231,13 @@ export default function App() {
                 updatedAt: new Date().toISOString(),
               }));
 
+              // Record existing members of this department for server deletion
+              filteredMembers.forEach((m) => {
+                if (!deletedMemberIdsRef.current.includes(m.id)) {
+                  deletedMemberIdsRef.current.push(m.id);
+                }
+              });
+
               setMembers(prev => [
                 ...prev.filter(m => m.departmentId !== selectedDeptId),
                 ...updatedList
@@ -1261,15 +1286,12 @@ export default function App() {
 
         const batch = writeBatch(db);
 
-        // 1. Fetch existing roster documents for this department from Firestore and queue deletion and replacement
-        const membersRef = collection(db, 'members');
-        const q = query(membersRef, where('departmentId', '==', selectedDeptId));
-        const querySnapshot = await withTimeout(getDocs(q), 20000);
-        querySnapshot.forEach((doc) => {
-          batch.delete(doc.ref);
+        // [OPTIMIZATION] Instantly queue deletes for locally removed members - NO slow getDocs read required!
+        deletedMemberIdsRef.current.forEach((id) => {
+          batch.delete(doc(db, 'members', id));
         });
 
-        // 2. Set all current local members to Firestore batch
+        // 2. Set all current local members to Firestore batch (Atomic overwrite/insert)
         targetMembers.forEach((m) => {
           const mRef = doc(db, 'members', m.id);
           batch.set(mRef, {
@@ -1283,9 +1305,11 @@ export default function App() {
           });
         });
 
-        await withTimeout(batch.commit(), 30000);
+        // Shorten timeout to 8 seconds so the app remains highly reactive & explains exactly what steps to do
+        await withTimeout(batch.commit(), 8000);
 
-        // Reset unsaved changes on successful batch commit
+        // Reset unsaved changes and delete queue on successful batch commit
+        deletedMemberIdsRef.current = [];
         updateHasUnsavedChanges(false);
         setIsOfflineMode(false); // Restore live database sync cleanly
         alert('🎉 성공적으로 부서원 명단이 원격 클라우드 서버에 안전하게 저장 및 실시간 동기화되었습니다!');

@@ -41,7 +41,7 @@ service cloud.firestore {
         && data.uid is string && data.uid.size() <= 128
         && data.email is string && data.email.size() > 0 && data.email.size() <= 128
         && data.displayName is string && data.displayName.size() <= 128
-        && data.photoUrl is string && data.photoUrl.size() <= 2083
+        && data.photoUrl is string && data.photoUrl.size() <= 500000
         && data.approved is bool
         && data.role is string && (data.role == 'admin' || data.role == 'user');
     }
@@ -59,7 +59,7 @@ service cloud.firestore {
         && data.departmentId is string && data.departmentId.size() <= 128
         && data.name is string && data.name.size() > 0 && data.name.size() <= 100
         && data.role is string && data.role.size() <= 100
-        && data.photoUrl is string && data.photoUrl.size() <= 2083
+        && data.photoUrl is string && data.photoUrl.size() <= 500000
         && data.selected is bool;
     }
 
