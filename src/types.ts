@@ -39,3 +39,12 @@ export interface AppUser {
   updatedAt: string;
 }
 
+export enum ShuffleStyle {
+  ROULETTE = 'ROULETTE',
+  MATRIX = 'MATRIX',
+  SLOT_MACHINE = 'SLOT_MACHINE',
+  VORTEX = 'VORTEX',
+  CARD_DEAL = 'CARD_DEAL',
+  RANDOM = 'RANDOM'
+}
+

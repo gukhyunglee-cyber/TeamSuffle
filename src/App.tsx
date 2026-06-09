@@ -38,7 +38,7 @@ import {
   Save
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Member, Group, Department, AppUser } from './types';
+import { Member, Group, Department, AppUser, ShuffleStyle } from './types';
 import { DEFAULT_MEMBERS } from './data/defaultMembers';
 import AddMemberForm from './components/AddMemberForm';
 import MemberItemCard from './components/MemberItemCard';
@@ -181,6 +181,13 @@ export default function App() {
   const [isShuffling, setIsShuffling] = useState(false);
   const [shufflePhase, setShufflePhase] = useState<'idle' | 'preparing' | 'scrambling' | 'positioning' | 'completed'>('idle');
   const [activeShuffleMember, setActiveShuffleMember] = useState<Member | null>(null);
+  const [selectedShuffleStyle, setSelectedShuffleStyle] = useState<ShuffleStyle>(() => {
+    const saved = safeStorage.getItem('preferred_shuffle_style');
+    return (saved as ShuffleStyle) || ShuffleStyle.ROULETTE;
+  });
+  const [activeShuffleStyle, setActiveShuffleStyle] = useState<ShuffleStyle>(ShuffleStyle.ROULETTE);
+  const [slotMachineReels, setSlotMachineReels] = useState<Member[][]>([]);
+  const [vortexMiniMembers, setVortexMiniMembers] = useState<Member[]>([]);
   const [copied, setCopied] = useState(false);
   const [rulesCopied, setRulesCopied] = useState(false);
 
@@ -1350,26 +1357,62 @@ export default function App() {
 
     const actualGroupCount = Math.min(groupCount, activeMembers.length);
 
+    // Decide active style at run-time if RANDOM is chosen
+    let activeStyleDecision = selectedShuffleStyle;
+    if (selectedShuffleStyle === ShuffleStyle.RANDOM) {
+      const styles = [
+        ShuffleStyle.ROULETTE,
+        ShuffleStyle.MATRIX,
+        ShuffleStyle.SLOT_MACHINE,
+        ShuffleStyle.VORTEX,
+        ShuffleStyle.CARD_DEAL,
+      ];
+      activeStyleDecision = styles[Math.floor(Math.random() * styles.length)];
+    }
+    setActiveShuffleStyle(activeStyleDecision);
+
     setIsShuffling(true);
     setActiveStep(2);
     setShufflePhase('preparing');
-    
+
+    // 1. Prepare Style-specific data structures
+    if (activeStyleDecision === ShuffleStyle.SLOT_MACHINE) {
+      // Build 3 separate reels with randomized members for slot machine style
+      const reels: Member[][] = [];
+      const numReels = Math.min(4, actualGroupCount || 3);
+      for (let i = 0; i < numReels; i++) {
+        // Create a long list for infinite scroll feeling
+        const reelList: Member[] = [];
+        for (let j = 0; j < 6; j++) {
+          reelList.push(...[...activeMembers].sort(() => Math.random() - 0.5));
+        }
+        reels.push(reelList.slice(0, 18));
+      }
+      setSlotMachineReels(reels);
+    } else if (activeStyleDecision === ShuffleStyle.VORTEX) {
+      // Prepare a random subset or all members for spiral orbit simulation
+      const subset = [...activeMembers].sort(() => Math.random() - 0.5).slice(0, 18);
+      setVortexMiniMembers(subset);
+    }
+
     let counter = 0;
-    const intervalTime = 80;
-    const totalFlashingTime = 1600;
-    
+    const intervalTime = 70;
+    // Set a solid 2.4s scrambling time for maximum suspense and build-up
+    const totalFlashingTime = 2400;
+
     setTimeout(() => {
       setShufflePhase('scrambling');
-      
+
       const flasher = setInterval(() => {
+        // Keep selecting random members for visual flashing across all styles
         const randomIdx = Math.floor(Math.random() * activeMembers.length);
         setActiveShuffleMember(activeMembers[randomIdx] as Member);
         counter += intervalTime;
-        
+
         if (counter >= totalFlashingTime) {
           clearInterval(flasher);
           setShufflePhase('positioning');
-          
+
           setTimeout(() => {
             const shuffled = shuffleArray<Member>(activeMembers);
             const generatedGroups: Group[] = Array.from({ length: actualGroupCount }, (_, i) => ({
@@ -1384,16 +1427,19 @@ export default function App() {
 
             setGroups(generatedGroups);
             setShufflePhase('completed');
-            
+
+            // Hold on completion phase for the gorgeous blast animation effect
             setTimeout(() => {
               setIsShuffling(false);
               setShufflePhase('idle');
               setActiveShuffleMember(null);
-            }, 800);
-          }, 600);
+              setSlotMachineReels([]);
+              setVortexMiniMembers([]);
+            }, 1200);
+          }, 800);
         }
       }, intervalTime);
-    }, 450);
+    }, 500);
   };
 
   // Rename a dynamic team group
@@ -2050,6 +2096,48 @@ service cloud.firestore {
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans text-slate-900 overflow-hidden select-none">
       
+      {/* Custom dynamic styles for gorgeous shuffle animations */}
+      <style>{`
+        @keyframes matrix-fall-slow {
+          0% { transform: translateY(-120%); opacity: 0; }
+          10% { opacity: 0.8; }
+          90% { opacity: 0.8; }
+          100% { transform: translateY(120%); opacity: 0; }
+        }
+        @keyframes custom-fast-spin {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+        @keyframes pulse-glorious {
+          0%, 100% { transform: scale(1); filter: brightness(1); }
+          50% { transform: scale(1.05); filter: brightness(1.15) drop-shadow(0 0 20px rgba(99, 102, 241, 0.6)); }
+        }
+        @keyframes slot-shl-spin {
+          0% { transform: translateY(0); }
+          100% { transform: translateY(-1500px); }
+        }
+        @keyframes cyber-scan {
+          0% { top: 0%; }
+          50% { top: 100%; }
+          100% { top: 0%; }
+        }
+        @keyframes spiral-orbit {
+          0% { transform: rotate(0deg) translateX(80px) rotate(0deg); }
+          50% { transform: rotate(180deg) translateX(110px) rotate(-180deg); }
+          100% { transform: rotate(360deg) translateX(80px) rotate(-360deg); }
+        }
+        @keyframes float-poker {
+          0%, 100% { transform: translateY(0px) rotate(0deg); }
+          50% { transform: translateY(-8px) rotate(2deg); }
+        }
+        .animate-matrix-green {
+          animation: matrix-fall-slow var(--fall-duration) linear infinite;
+        }
+        .animate-custom-orbit {
+          animation: spiral-orbit var(--orbit-duration) linear infinite;
+        }
+      `}</style>
+      
       {/* 1. TOP RESPONSIVE BRAND HEADER & HAMBURGER MENU */}
       {renderNavbar()}
 
@@ -2462,6 +2550,57 @@ service cloud.firestore {
                 </div>
               </div>
 
+              {/* Futuristic interactive Shuffle style selector bar */}
+              <div className="bg-slate-50 border border-slate-200/90 rounded-2xl p-3 md:p-4 text-left select-none shadow-2xs">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-1.5 mb-2.5">
+                  <div className="flex items-center gap-1.5">
+                    <Sparkles className="w-4 h-4 text-indigo-500 animate-pulse" />
+                    <span className="text-xs font-extrabold text-slate-800">셔플 애니메이션 피버 스타일</span>
+                  </div>
+                  <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">
+                    ※ 각 스타일별 특수 연출 효과를 제공합니다
+                  </span>
+                </div>
+                
+                <div className="grid grid-cols-2 xs:grid-cols-3 sm:grid-cols-6 gap-2">
+                  {[
+                    { id: ShuffleStyle.ROULETTE, label: '클래식 룰렛', sub: 'Retro Flash', icon: RotateCcw, color: 'border-emerald-200/60 text-emerald-700 bg-emerald-50/20 hover:bg-emerald-50/60' },
+                    { id: ShuffleStyle.MATRIX, label: '디지털 매트릭스', sub: 'Cyber Rain', icon: Sparkles, color: 'border-green-200/60 text-green-700 bg-green-50/20 hover:bg-green-50/60' },
+                    { id: ShuffleStyle.SLOT_MACHINE, label: '슬롯 머신', sub: 'Jackpot Reels', icon: Layers, color: 'border-amber-200/60 text-amber-700 bg-amber-50/20 hover:bg-amber-50/60' },
+                    { id: ShuffleStyle.VORTEX, label: '블랙홀 흡입', sub: 'Cosmic Vortex', icon: Shuffle, color: 'border-indigo-200/60 text-indigo-700 bg-indigo-50/20 hover:bg-indigo-50/60' },
+                    { id: ShuffleStyle.CARD_DEAL, label: '카드 딜러', sub: 'Dealing Deal', icon: HelpCircle, color: 'border-rose-200/60 text-rose-750 bg-rose-50/20 hover:bg-rose-50/60' },
+                    { id: ShuffleStyle.RANDOM, label: '무작위 믹스 🎲', sub: 'Surprise Style', icon: Users, color: 'border-purple-200/65 text-purple-750 bg-purple-50/20 hover:bg-purple-50/60' }
+                  ].map((style) => {
+                    const isSelected = selectedShuffleStyle === style.id;
+                    const Icon = style.icon;
+                    return (
+                      <button
+                        key={style.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedShuffleStyle(style.id);
+                          safeStorage.setItem('preferred_shuffle_style', style.id);
+                        }}
+                        className={`p-2 rounded-xl border flex flex-col items-center justify-center text-center transition-all cursor-pointer relative overflow-hidden group active:scale-95 ${
+                          isSelected
+                            ? 'bg-slate-900 border-slate-950 text-white shadow-sm ring-2 ring-indigo-500/20'
+                            : `${style.color}`
+                        }`}
+                      >
+                        <Icon className={`w-3.5 h-3.5 mb-1 transition-transform ${isSelected ? 'text-indigo-400 rotate-12' : 'text-slate-500 group-hover:scale-110'}`} />
+                        <span className="text-[11px] font-black block truncate max-w-full leading-tight">{style.label}</span>
+                        <span className={`text-[8.5px] uppercase block tracking-wide font-bold scale-[0.9] mt-0.5 ${isSelected ? 'text-slate-350' : 'text-slate-400'}`}>
+                          {style.sub}
+                        </span>
+                        {isSelected && (
+                          <div className="absolute right-1 top-1 w-1.5 h-1.5 rounded-full bg-indigo-500 shrink-0" />
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
               {/* Main Results Board */}
               <div id="main-results-board" className="flex-1 flex flex-col gap-4">
                 <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-1 border-b border-slate-100">
@@ -2772,66 +2911,345 @@ service cloud.firestore {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-50 flex items-center justify-center p-4"
+            className="fixed inset-0 bg-slate-950/70 backdrop-blur-md z-50 flex items-center justify-center p-4"
           >
             <motion.div
               initial={{ scale: 0.94, y: 15 }}
               animate={{ scale: 1, y: 0 }}
               exit={{ scale: 0.94, y: 15 }}
-              className="bg-white rounded-3xl shadow-2xl p-8 max-w-sm w-full border border-slate-100 text-center relative overflow-hidden"
+              className={`rounded-3xl shadow-2xl p-6 md:p-8 w-full border text-center relative overflow-hidden transition-all ${
+                activeShuffleStyle === ShuffleStyle.MATRIX
+                  ? 'bg-slate-950 border-green-500/40 text-green-400 max-w-sm'
+                  : activeShuffleStyle === ShuffleStyle.SLOT_MACHINE
+                  ? 'bg-slate-900 border-amber-500/40 text-slate-100 max-w-md md:max-w-lg'
+                  : activeShuffleStyle === ShuffleStyle.VORTEX
+                  ? 'bg-slate-900 border-indigo-500/40 text-indigo-50 max-w-sm'
+                  : activeShuffleStyle === ShuffleStyle.CARD_DEAL
+                  ? 'bg-slate-900 border-rose-500/40 text-rose-50 max-w-md'
+                  : 'bg-white border-slate-150 text-slate-800 max-w-sm'
+              }`}
             >
-              {/* Colorful gradient indicator */}
-              <div className="absolute top-0 inset-x-0 h-1.5 bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500" />
+              {/* Top accent gradient border */}
+              <div className={`absolute top-0 inset-x-0 h-1.5 ${
+                activeShuffleStyle === ShuffleStyle.MATRIX
+                  ? 'bg-gradient-to-r from-green-500 to-emerald-500'
+                  : activeShuffleStyle === ShuffleStyle.SLOT_MACHINE
+                  ? 'bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-500'
+                  : activeShuffleStyle === ShuffleStyle.VORTEX
+                  ? 'bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500'
+                  : activeShuffleStyle === ShuffleStyle.CARD_DEAL
+                  ? 'bg-gradient-to-r from-rose-500 to-pink-500'
+                  : 'bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500'
+              }`} />
               
               <div className="space-y-6">
-                <div className="mx-auto w-14 h-14 bg-indigo-50 rounded-2xl flex items-center justify-center text-indigo-600">
-                  <RefreshCw className="w-7 h-7 animate-spin" />
-                </div>
-
-                <div className="space-y-1.5">
-                  <h3 className="text-base font-bold text-slate-800">
-                    {shufflePhase === 'preparing' && '조 정보 취합 중...'}
-                    {shufflePhase === 'scrambling' && '카드를 고르게 섞는 중...'}
-                    {shufflePhase === 'positioning' && '팀 균등 분배 매칭 시뮬레이션...'}
-                    {shufflePhase === 'completed' && '조 편성 배치 완료!'}
-                  </h3>
-                  <p className="text-[11px] text-slate-400">
-                    안전하고 무작위가 보장된 셔플링을 보장합니다
-                  </p>
-                </div>
-
-                {/* Scrambling face display */}
-                <div className="h-24 flex items-center justify-center relative">
-                  <AnimatePresence mode="popLayout">
-                    {activeShuffleMember && (
-                      <motion.div
-                        key={activeShuffleMember.id}
-                        initial={{ scale: 0.6, opacity: 0 }}
-                        animate={{ scale: 1, opacity: 1 }}
-                        exit={{ scale: 1.4, opacity: 0 }}
-                        transition={{ duration: 0.1 }}
-                        className="absolute flex flex-col items-center gap-1"
-                      >
-                        <div className="w-14 h-14 rounded-full overflow-hidden border-2 border-indigo-500 shadow-md">
-                          <img
-                            src={activeShuffleMember.photoUrl}
-                            alt={activeShuffleMember.name}
-                            referrerPolicy="no-referrer"
-                            className="w-full h-full object-cover"
-                          />
-                        </div>
-                        <span className="text-[11px] font-bold text-slate-600">
-                          {activeShuffleMember.name} ({activeShuffleMember.role?.split('/')[0] || '부서원'})
-                        </span>
-                      </motion.div>
+                {/* 1. Header with dynamic states and status icons */}
+                <div className="flex flex-col items-center gap-1.5">
+                  <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${
+                    activeShuffleStyle === ShuffleStyle.MATRIX
+                      ? 'bg-green-950/45 text-green-400 border border-green-500/30'
+                      : activeShuffleStyle === ShuffleStyle.SLOT_MACHINE
+                      ? 'bg-amber-950/45 text-amber-400 border border-amber-400/30'
+                      : activeShuffleStyle === ShuffleStyle.VORTEX
+                      ? 'bg-indigo-950/45 text-indigo-400 border border-indigo-500/30'
+                      : activeShuffleStyle === ShuffleStyle.CARD_DEAL
+                      ? 'bg-rose-950/45 text-rose-400 border border-rose-500/30'
+                      : 'bg-indigo-50 text-indigo-600 border border-indigo-100'
+                  }`}>
+                    {shufflePhase === 'completed' ? (
+                      <Sparkles className="w-5 h-5 animate-pulse" />
+                    ) : (
+                      <RefreshCw className="w-5 h-5 animate-spin" style={{ animationDuration: '3s' }} />
                     )}
-                  </AnimatePresence>
+                  </div>
+
+                  <div className="space-y-1 mt-1">
+                    <h3 className={`text-base font-black tracking-tight ${
+                      activeShuffleStyle === ShuffleStyle.MATRIX ? 'font-mono text-green-300' : ''
+                    }`}>
+                      {shufflePhase === 'preparing' && '조 정보 구성 및 통계 수집 중...'}
+                      {shufflePhase === 'scrambling' && (
+                        activeShuffleStyle === ShuffleStyle.MATRIX ? '디지털 코드 숲 셔플링...' :
+                        activeShuffleStyle === ShuffleStyle.SLOT_MACHINE ? '잭팟 슬롯 활성 고속 드로우...' :
+                        activeShuffleStyle === ShuffleStyle.VORTEX ? '소용돌이 블랙홀 중력 배정...' :
+                        activeShuffleStyle === ShuffleStyle.CARD_DEAL ? 'Roster 카드 패 분배 시뮬레이션...' :
+                        '카드를 고르게 섞는 중...'
+                      )}
+                      {shufflePhase === 'positioning' && '부서 배정 균등 매칭 밸런싱...'}
+                      {shufflePhase === 'completed' && '🎉 조 편성 완료 / 완벽 동기화!'}
+                    </h3>
+                    <p className={`text-[11px] ${
+                      activeShuffleStyle === ShuffleStyle.MATRIX ? 'text-green-500/60 font-mono' : 'text-slate-400'
+                    }`}>
+                      {activeShuffleStyle === ShuffleStyle.MATRIX ? 'ENCRYPTING RANDOM MATRIX STREAM' : '무작위 및 공평한 룰이 완벽 보장됩니다'}
+                    </p>
+                  </div>
                 </div>
 
-                {/* Visual loading bar */}
-                <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
+                {/* 2. Style-Specific Dynamic Render Playground */}
+                <div className="my-5 relative">
+                  
+                  {/* STYLE A: CLASSIC ROULETTE */}
+                  {activeShuffleStyle === ShuffleStyle.ROULETTE && (
+                    <div className="space-y-5">
+                      <div className="relative w-36 h-36 mx-auto flex items-center justify-center">
+                        <div className="absolute inset-0 rounded-full border-4 border-indigo-500/10 animate-ping" style={{ animationDuration: '2s' }} />
+                        <div className="absolute inset-2 rounded-full border border-dashed border-indigo-400 rotate-slow animate-spin" style={{ animationDuration: '8s' }} />
+                        <div className="absolute inset-4 rounded-full border border-indigo-100/65" />
+                        
+                        <AnimatePresence mode="popLayout">
+                          {activeShuffleMember && (
+                            <motion.div
+                              key={activeShuffleMember.id}
+                              initial={{ scale: 0.6, rotate: -20, opacity: 0 }}
+                              animate={{ scale: 1, rotate: 0, opacity: 1 }}
+                              exit={{ scale: 1.4, rotate: 20, opacity: 0 }}
+                              transition={{ duration: 0.12 }}
+                              className="absolute"
+                            >
+                              <img
+                                src={activeShuffleMember.photoUrl}
+                                alt={activeShuffleMember.name}
+                                referrerPolicy="no-referrer"
+                                className="w-22 h-22 rounded-full object-cover border-4 border-indigo-500 shadow-lg"
+                              />
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+                      </div>
+
+                      {activeShuffleMember && (
+                        <motion.div
+                          key={`det-${activeShuffleMember.id}`}
+                          initial={{ opacity: 0, y: 5 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          className="text-center"
+                        >
+                          <span className="text-lg font-black text-slate-800">{activeShuffleMember.name}</span>
+                          <span className="text-[10px] ml-1 bg-indigo-50 text-indigo-700 border border-indigo-100/60 font-extrabold px-2 py-0.5 rounded-full inline-block">
+                            {activeShuffleMember.role || '부서원'}
+                          </span>
+                        </motion.div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* STYLE B: KEY MATRIX WATERFALL */}
+                  {activeShuffleStyle === ShuffleStyle.MATRIX && (
+                    <div className="h-44 w-full bg-black/95 border border-green-500/30 rounded-2xl relative overflow-hidden flex items-center justify-center">
+                      <div className="absolute inset-0 bg-gradient-to-b from-transparent via-green-500/10 to-transparent pointer-events-none" style={{ animation: 'cyber-scan 5s linear infinite' }} />
+                      <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_50%,rgba(0,0,0,0.85)_100%)] pointer-events-none" />
+                      
+                      <div className="absolute inset-0 flex justify-between px-2 text-[8px] font-mono select-none opacity-40 pointer-events-none">
+                        {Array.from({ length: 12 }).map((_, colIdx) => (
+                          <span
+                            key={colIdx}
+                            className="text-green-500/80 leading-none h-full block animate-matrix-green"
+                            style={{
+                              '--fall-duration': `${1.8 + Math.random() * 2.2}s`,
+                              writingMode: 'vertical-rl',
+                              animationDelay: `${colIdx * 0.12}s`
+                            } as any}
+                          >
+                            {Array.from({ length: 15 }).map(() => '0101SHFL정예멤버당첨자'[Math.floor(Math.random() * 12)]).join('')}
+                          </span>
+                        ))}
+                      </div>
+
+                      <AnimatePresence mode="popLayout">
+                        {activeShuffleMember ? (
+                          <motion.div
+                            key={`m-${activeShuffleMember.id}`}
+                            initial={{ scale: 0.8, opacity: 0 }}
+                            animate={{ scale: 1, opacity: 1 }}
+                            exit={{ scale: 1.25, opacity: 0 }}
+                            transition={{ duration: 0.1 }}
+                            className="relative z-10 flex flex-col items-center"
+                          >
+                            <img
+                              src={activeShuffleMember.photoUrl}
+                              alt=""
+                              referrerPolicy="no-referrer"
+                              className="w-20 h-20 rounded-lg object-cover border-2 border-green-500 shadow-[0_0_15px_rgba(34,197,94,0.65)]"
+                            />
+                            <span className="text-xs font-black tracking-widest text-green-400 bg-slate-950/90 border border-green-500/50 px-3 py-1 rounded-md mt-3 font-mono">
+                               {activeShuffleMember.name} (ID: {activeShuffleMember.id.substr(0,4)})
+                            </span>
+                          </motion.div>
+                        ) : null}
+                      </AnimatePresence>
+                    </div>
+                  )}
+
+                  {/* STYLE C: JACKPOT REEL SLOT MACHINE */}
+                  {activeShuffleStyle === ShuffleStyle.SLOT_MACHINE && (
+                    <div className="bg-slate-950 border-2 border-amber-400 rounded-2xl p-4 shadow-[0_0_20px_rgba(245,158,11,0.2)] relative overflow-hidden">
+                      <div className="absolute top-1 inset-x-0 flex justify-center gap-1">
+                        <div className="w-1 h-1 bg-amber-400 rounded-full animate-ping" />
+                        <span className="text-[9px] font-black text-amber-300 font-mono px-2 uppercase tracking-wide">SHUFFLE REELS</span>
+                        <div className="w-1 h-1 bg-amber-400 rounded-full animate-ping" style={{ animationDelay: '0.3s' }} />
+                      </div>
+
+                      <div className="grid grid-cols-4 gap-2 mt-4.5">
+                        {slotMachineReels.slice(0, 4).map((reelList, rIdx) => {
+                          const isSpinning = shufflePhase === 'scrambling' || shufflePhase === 'preparing';
+                          // Standard reel index cycling based on date
+                          const targetDisplayIdx = (rIdx + 2) % reelList.length;
+                          const displayMember = reelList[targetDisplayIdx] || activeShuffleMember;
+                          return (
+                            <div key={rIdx} className="h-28 bg-slate-900 border border-slate-800 rounded-xl overflow-hidden relative flex flex-col justify-center items-center">
+                              {isSpinning ? (
+                                <div 
+                                  className="w-full absolute inset-x-0 flex flex-col gap-2" 
+                                  style={{
+                                    animation: 'slot-shl-spin 0.4s linear infinite',
+                                    animationDelay: `${rIdx * 0.08}s`
+                                  }}
+                                >
+                                  {reelList.map((m, idx) => (
+                                    <div key={idx} className="flex flex-col items-center gap-1 opacity-45">
+                                      <img src={m.photoUrl} alt="" className="w-6 h-6 rounded-full border border-slate-700 object-cover" />
+                                      <span className="text-[7.5px] text-slate-400 truncate w-11 font-bold">{m.name}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <motion.div
+                                  initial={{ y: -40, opacity: 0, scale: 0.6 }}
+                                  animate={{ y: 0, opacity: 1, scale: 1 }}
+                                  transition={{ type: 'spring', damping: 12, stiffness: 150, delay: rIdx * 0.12 }}
+                                  className="flex flex-col items-center gap-1 relative z-10 p-1"
+                                >
+                                  {displayMember && (
+                                    <>
+                                      <img 
+                                        src={displayMember.photoUrl} 
+                                        alt="" 
+                                        className="w-10 h-10 rounded-full border border-amber-400 shadow-md object-cover" 
+                                      />
+                                      <span className="text-[10px] font-black text-amber-200 truncate w-14 block text-center">{displayMember.name}</span>
+                                      <span className="text-[7px] text-slate-400 truncate w-14 block text-center font-bold">배정확정</span>
+                                    </>
+                                  )}
+                                </motion.div>
+                              )}
+                              <div className="absolute inset-x-0 top-0 h-3 bg-linear-to-b from-black/85 to-transparent pointer-events-none" />
+                              <div className="absolute inset-x-0 bottom-0 h-3 bg-linear-to-t from-black/85 to-transparent pointer-events-none" />
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* STYLE D: COSMIC ORBIT VORTEX */}
+                  {activeShuffleStyle === ShuffleStyle.VORTEX && (
+                    <div className="h-44 w-full bg-radial from-slate-900 to-indigo-950 rounded-2xl relative overflow-hidden flex items-center justify-center border border-indigo-900/55 shadow-[inset_0_0_20px_rgba(99,102,241,0.15)]">
+                      <div className="absolute w-56 h-56 rounded-full border border-dashed border-indigo-500/10 animate-spin" style={{ animationDuration: '5s' }} />
+                      <div className="absolute w-36 h-36 rounded-full border border-dashed border-purple-500/15 animate-spin" style={{ animationDuration: '9s', animationDirection: 'reverse' }} />
+                      
+                      {(shufflePhase === 'scrambling' || shufflePhase === 'preparing') && (
+                        <div className="absolute inset-0 pointer-events-none overflow-hidden">
+                          {vortexMiniMembers.map((m, idx) => (
+                            <div
+                              key={m.id}
+                              className="absolute left-1/2 top-1/2 -ml-3 -mt-3 animate-custom-orbit"
+                              style={{
+                                '--orbit-duration': `${2.2 + (idx * 0.25)}s`,
+                                animationDelay: `${idx * -0.15}s`
+                              } as any}
+                            >
+                              <img
+                                src={m.photoUrl}
+                                alt=""
+                                className="w-6 h-6 rounded-full border border-indigo-400/40 opacity-70 shadow-xs object-cover"
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      <AnimatePresence mode="popLayout">
+                        {activeShuffleMember && (
+                          <motion.div
+                            key={`v-${activeShuffleMember.id}`}
+                            initial={{ scale: 0.1, rotate: -180, opacity: 0 }}
+                            animate={{ scale: 1, rotate: 0, opacity: 1 }}
+                            exit={{ scale: 1.8, rotate: 180, opacity: 0 }}
+                            transition={{ duration: 0.15 }}
+                            className="absolute flex flex-col items-center"
+                          >
+                            <img
+                              src={activeShuffleMember.photoUrl}
+                              alt=""
+                              className="w-18 h-18 rounded-full border-2 border-indigo-400 shadow-xl object-cover"
+                            />
+                            <span className="text-[11px] font-black text-indigo-200 mt-2 block bg-indigo-950/80 px-2.5 py-0.5 rounded-full border border-indigo-500/30">
+                              {activeShuffleMember.name}
+                            </span>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
+                  )}
+
+                  {/* STYLE E: CARD DEAL CARD SHUFFLE */}
+                  {activeShuffleStyle === ShuffleStyle.CARD_DEAL && (
+                    <div className="h-44 w-full bg-slate-900 border border-slate-800 rounded-xl relative overflow-hidden flex items-center justify-between p-4 shadow-inner">
+                      <div className="relative w-14 h-22 bg-slate-800/80 rounded-xl border border-rose-500/20 flex flex-col items-center justify-center shadow-md shrink-0">
+                        <span className="text-[7.5px] font-black text-slate-400 uppercase rotate-90 truncate max-w-16">ROSTER DECK</span>
+                        <div className="absolute -bottom-1 -right-1 w-full h-full bg-slate-850/60 rounded-xl border border-slate-800 pointer-events-none -z-10" />
+                        <div className="absolute -bottom-2 -right-2 w-full h-full bg-slate-900/45 rounded-xl border border-slate-850 pointer-events-none -z-20" />
+                      </div>
+
+                      {shufflePhase === 'scrambling' && activeShuffleMember && (
+                        <motion.div
+                          key={`c-${activeShuffleMember.id}`}
+                          initial={{ x: -160, y: 0, rotate: -15, scale: 0.7 }}
+                          animate={{ x: 10, y: [0, -12, 0], rotate: [0, 10, 5], scale: 1 }}
+                          exit={{ x: 120, y: 0, rotate: 20, scale: 0.6, opacity: 0 }}
+                          transition={{ duration: 0.15 }}
+                          className="absolute left-1/2 -ml-10 w-20 h-28 bg-white text-slate-800 rounded-xl border-2 border-rose-500 shadow-xl flex flex-col justify-between p-2 z-20 overflow-hidden"
+                        >
+                          <span className="text-[7.5px] font-black text-rose-500 self-start">A</span>
+                          <img src={activeShuffleMember.photoUrl} alt="" className="w-10 h-10 rounded-lg object-cover mx-auto shrink-0" />
+                          <span className="text-[9px] font-black text-slate-800 truncate text-center block mt-1">{activeShuffleMember.name}</span>
+                          <span className="text-[7.5px] font-black text-rose-500 self-end rotate-180">A</span>
+                        </motion.div>
+                      )}
+
+                      <div className="flex flex-col gap-1 shrink-0">
+                        <div className="text-[8.5px] font-bold text-rose-350 font-mono text-right uppercase tracking-[0.1em] mb-1">DELETING DECK</div>
+                        <div className="flex gap-1.5">
+                          {Array.from({ length: 3 }).map((_, idx) => (
+                            <div key={idx} className="w-11 h-18 bg-slate-950 border border-slate-800 rounded-lg relative flex flex-col items-center justify-center shadow-inner shrink-0">
+                              <span className="text-[7px] text-slate-500 font-bold mb-1">TEAM {idx + 1}</span>
+                              {shufflePhase === 'scrambling' && (
+                                <div className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping" style={{ animationDelay: `${idx * 0.15}s` }} />
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                </div>
+
+                {/* 3. Global Loading State Indicator Bar */}
+                <div className="w-full bg-slate-150/45 h-1.5 rounded-full overflow-hidden">
                   <motion.div
-                    className="h-full bg-indigo-600"
+                    className={`h-full ${
+                      activeShuffleStyle === ShuffleStyle.MATRIX
+                        ? 'bg-green-500'
+                        : activeShuffleStyle === ShuffleStyle.SLOT_MACHINE
+                        ? 'bg-amber-400'
+                        : activeShuffleStyle === ShuffleStyle.VORTEX
+                        ? 'bg-indigo-500'
+                        : activeShuffleStyle === ShuffleStyle.CARD_DEAL
+                        ? 'bg-rose-500'
+                        : 'bg-indigo-600'
+                    }`}
                     initial={{ width: '0%' }}
                     animate={{ 
                       width: shufflePhase === 'preparing' ? '25%' : 
