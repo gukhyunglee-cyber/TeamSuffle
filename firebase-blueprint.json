@@ -1,0 +1,124 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "A user profile record registered via Google Sign-In with approval states.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Unique user credentials identifier."
+        },
+        "email": {
+          "type": "string",
+          "description": "User email address matching Google auth."
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Public screen name."
+        },
+        "photoUrl": {
+          "type": "string",
+          "description": "User profile avatar url."
+        },
+        "approved": {
+          "type": "boolean",
+          "description": "Whether the user's login access is approved by the Super Admin."
+        },
+        "role": {
+          "type": "string",
+          "description": "The administrative role (e.g. admin, user)."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when the user was first registered."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when the user profile was last modified."
+        }
+      },
+      "required": ["uid", "email", "displayName", "photoUrl", "approved", "role", "createdAt", "updatedAt"]
+    },
+    "Department": {
+      "title": "Department",
+      "description": "A department or team that holds a list of members.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Name of the department."
+        },
+        "password": {
+          "type": "string",
+          "description": "Access password for the creator of the department."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when the department was created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when the department was last updated."
+        }
+      },
+      "required": ["name", "password", "createdAt", "updatedAt"]
+    },
+    "Member": {
+      "title": "Member",
+      "description": "A member registered in the department roster.",
+      "type": "object",
+      "properties": {
+        "departmentId": {
+          "type": "string",
+          "description": "ID of the department this member belongs to."
+        },
+        "name": {
+          "type": "string",
+          "description": "Full name of the department member."
+        },
+        "role": {
+          "type": "string",
+          "description": "Position, title, or role of the member within the shuffle."
+        },
+        "photoUrl": {
+          "type": "string",
+          "description": "Unsplash or custom photo URL for the member avatar."
+        },
+        "selected": {
+          "type": "boolean",
+          "description": "Whether the member is currently selected to participate in the draw."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when the member was added."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when the member was last modified."
+        }
+      },
+      "required": ["departmentId", "name", "role", "photoUrl", "selected", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "users/{userId}": {
+      "schema": "User",
+      "description": "Registered Google sign-in users with authorization flags."
+    },
+    "departments/{departmentId}": {
+      "schema": "Department",
+      "description": "A list of created departments with access passwords."
+    },
+    "members/{memberId}": {
+      "schema": "Member",
+      "description": "Roster of department members shared across devices in real-time."
+    }
+  }
+}

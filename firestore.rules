@@ -1,0 +1,105 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Global default deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Helper to check if signed-in user is authenticated & fully approved
+    function isApproved() {
+      return isSignedIn() && (
+        (request.auth.token.email != null && request.auth.token.email.lower() == 'gukhyunglee@gmail.com') || (
+          exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.approved == true
+        )
+      );
+    }
+
+    // Is the user the super admin?
+    // GukhyungLee@gmail.com is defined as the super admin
+    function isSuperAdmin() {
+      return isSignedIn() && (
+        (request.auth.token.email != null && request.auth.token.email.lower() == 'gukhyunglee@gmail.com') || (
+          exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'
+        )
+      );
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128;
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'email', 'displayName', 'photoUrl', 'approved', 'role', 'createdAt', 'updatedAt'])
+        && data.keys().size() == 8
+        && data.uid is string && data.uid.size() <= 128
+        && data.email is string && data.email.size() > 0 && data.email.size() <= 128
+        && data.displayName is string && data.displayName.size() <= 128
+        && data.photoUrl is string && data.photoUrl.size() <= 2083
+        && data.approved is bool
+        && data.role is string && (data.role == 'admin' || data.role == 'user');
+    }
+
+    function isValidDepartment(data) {
+      return data.keys().hasAll(['name', 'password', 'createdAt', 'updatedAt'])
+        && data.keys().size() == 4
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 100
+        && data.password is string && data.password.size() > 0 && data.password.size() <= 100;
+    }
+
+    function isValidMember(data) {
+      return data.keys().hasAll(['departmentId', 'name', 'role', 'photoUrl', 'selected', 'createdAt', 'updatedAt'])
+        && data.keys().size() == 7
+        && data.departmentId is string && data.departmentId.size() <= 128
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 100
+        && data.role is string && data.role.size() <= 100
+        && data.photoUrl is string && data.photoUrl.size() <= 2083
+        && data.selected is bool;
+    }
+
+    // Rules for User profiles
+    match /users/{userId} {
+      // Allow a user to get their own profile unconditionally
+      allow get: if isSignedIn() && userId == request.auth.uid;
+      // Allow approved users or admins to get other user profiles
+      allow get: if isSignedIn() && userId != request.auth.uid && isApproved();
+      
+      allow list: if isSignedIn() && isApproved();
+      
+      // Permit creation of user's own profile during initial Google authentication
+      allow create: if isSignedIn() && userId == request.auth.uid && isValidUser(request.resource.data);
+      
+      // Only the Super Admin can update any user profile
+      allow update: if isSignedIn() && isSuperAdmin() && isValidUser(request.resource.data);
+      
+      // The user themselves (non-admin) can update limited fields of their own profile
+      allow update: if isSignedIn() && userId == request.auth.uid && 
+        isValidUser(request.resource.data) &&
+        request.resource.data.role == resource.data.role &&
+        request.resource.data.approved == resource.data.approved;
+      
+      // Only Super Admin can delete users
+      allow delete: if isSignedIn() && isSuperAdmin();
+    }
+
+    // 2. Department records
+    match /departments/{departmentId} {
+      allow read: if isApproved();
+      allow create, update: if isApproved() && isValidId(departmentId) && isValidDepartment(request.resource.data);
+      allow delete: if isApproved() && isValidId(departmentId);
+    }
+
+    // 3. Shared department member records
+    match /members/{memberId} {
+      allow read: if isApproved();
+      allow create, update: if isApproved() && isValidId(memberId) && isValidMember(request.resource.data);
+      allow delete: if isApproved() && isValidId(memberId);
+    }
+  }
+}

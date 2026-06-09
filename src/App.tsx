@@ -1,1182 +1,3205 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { 
-  Shuffle, 
-  Plus, 
-  Trash2, 
-  User, 
-  Users, 
-  Settings, 
-  RefreshCw, 
-  Image as ImageIcon, 
-  Sparkles, 
-  Copy, 
-  Check, 
-  Upload, 
-  X, 
-  Edit3, 
-  Layers, 
-  History, 
-  Download, 
-  ArrowRight,
-  UserPlus,
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import React, { useState, useEffect, useMemo } from 'react';
+import {
+  Shuffle,
+  Users,
+  RotateCcw,
+  Sparkles,
+  Share2,
+  Check,
+  Search,
+  Trash2,
+  RefreshCw,
+  Layers,
+  Award,
+  Crown,
   HelpCircle,
-  AlertCircle
+  Plus,
+  Download,
+  Smartphone,
+  Upload,
+  Lock,
+  Unlock,
+  Settings,
+  Edit3,
+  ExternalLink,
+  AlertTriangle,
+  Info,
+  Copy,
+  ChevronDown,
+  ChevronUp,
+  Menu,
+  X
 } from 'lucide-react';
-import confetti from 'canvas-confetti';
+import { motion, AnimatePresence } from 'motion/react';
+import { Member, Group, Department, AppUser } from './types';
+import { DEFAULT_MEMBERS } from './data/defaultMembers';
+import AddMemberForm from './components/AddMemberForm';
+import MemberItemCard from './components/MemberItemCard';
+import {
+  collection,
+  onSnapshot,
+  setDoc,
+  getDoc,
+  doc,
+  deleteDoc,
+  updateDoc,
+  writeBatch
+} from 'firebase/firestore';
+import { onAuthStateChanged } from 'firebase/auth';
+import { db, auth, loginWithGoogle, loginWithGoogleRedirect, logout, authenticateApp, testConnection, handleFirestoreError, OperationType, safeStorage } from './firebase';
 
-// --- Types ---
-interface Member {
-  id: string;
-  name: string;
-  role: string; // e.g. "기획팀", "개발팀" etc (optional category)
-  avatarColor: string;
-  photoUrl?: string; // Uploaded custom image (base64)
+function shuffleArray<T>(array: T[]): T[] {
+  const arr = [...array];
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
 }
 
-interface Team {
-  id: string;
-  name: string;
-  color: string;
-  members: Member[];
+// Helper to wrap Firestore Promises with an absolute timeout limit (2.5 seconds) to prevent infinite pending locks
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number = 2500): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error('네트워크 응답 시간 초과 (Timeout)'));
+    }, timeoutMs);
+    promise
+      .then((res) => {
+        clearTimeout(timer);
+        resolve(res);
+      })
+      .catch((err) => {
+        clearTimeout(timer);
+        reject(err);
+      });
+  });
 }
-
-interface ShuffleHistory {
-  id: string;
-  date: string;
-  teams: Team[];
-  themeName: string;
-}
-
-// Custom Colors for Avatars & Team Borders
-const AVATAR_COLORS = [
-  'bg-pink-100 text-pink-700 border-pink-200',
-  'bg-purple-100 text-purple-700 border-purple-200',
-  'bg-blue-100 text-blue-700 border-blue-200',
-  'bg-emerald-100 text-emerald-700 border-emerald-200',
-  'bg-amber-100 text-amber-700 border-amber-200',
-  'bg-indigo-100 text-indigo-700 border-indigo-200',
-  'bg-cyan-100 text-cyan-700 border-cyan-200',
-  'bg-rose-100 text-rose-700 border-rose-200',
-];
-
-const TEAM_THEME_COLORS = [
-  { bg: 'bg-indigo-50 hover:bg-indigo-100/70', border: 'border-indigo-200', text: 'text-indigo-800', badge: 'bg-indigo-100 text-indigo-700', ring: 'ring-indigo-400' },
-  { bg: 'bg-emerald-50 hover:bg-emerald-100/70', border: 'border-emerald-200', text: 'text-emerald-800', badge: 'bg-emerald-100 text-emerald-700', ring: 'ring-emerald-400' },
-  { bg: 'bg-amber-50 hover:bg-amber-100/70', border: 'border-amber-200', text: 'text-amber-800', badge: 'bg-amber-100 text-amber-700', ring: 'ring-amber-400' },
-  { bg: 'bg-rose-50 hover:bg-rose-100/70', border: 'border-rose-200', text: 'text-rose-800', badge: 'bg-rose-100 text-rose-700', ring: 'ring-rose-400' },
-  { bg: 'bg-purple-50 hover:bg-purple-100/70', border: 'border-purple-200', text: 'text-purple-800', badge: 'bg-purple-100 text-purple-700', ring: 'ring-purple-400' },
-  { bg: 'bg-sky-50 hover:bg-sky-100/70', border: 'border-sky-200', text: 'text-sky-800', badge: 'bg-sky-100 text-sky-700', ring: 'ring-sky-400' },
-  { bg: 'bg-pink-50 hover:bg-pink-100/70', border: 'border-pink-200', text: 'text-pink-800', badge: 'bg-pink-100 text-pink-700', ring: 'ring-pink-400' },
-  { bg: 'bg-teal-50 hover:bg-teal-100/70', border: 'border-teal-200', text: 'text-teal-800', badge: 'bg-teal-100 text-teal-700', ring: 'ring-teal-400' },
-];
-
-const GROUP_THEMES = [
-  { id: 'standard', name: '일반 (1조, 2조...)', prefixes: ['1조', '2조', '3조', '4조', '5조', '6조', '7조', '8조', '9조', '10조'] },
-  { id: 'animals', name: '동물 (사자, 호랑이...)', prefixes: ['🦁 사자 조', '🐯 호랑이 조', '🦅 독수리 조', '🐻 곰 조', '🦊 여우 조', '🐬 돌고래 조', '🐼 판다 조', '🦉 부엉이 조'] },
-  { id: 'planets', name: '우주 (수성, 금성...)', prefixes: ['☀️ 태양 팀', '🚀 은하 팀', '🌎 지구 팀', '🪐 토성 팀', '☄️ 혜성 팀', '💫 성운 팀', '🌌 은하수 팀', '🛸 안드로메다 팀'] },
-  { id: 'colors', name: '컬러 (레드, 블루...)', prefixes: ['🔴 레드 팀', '🔵 블루 팀', '🟢 그린 팀', '🟡 옐로우 팀', '🟣 퍼플 팀', '🟠 오렌지 팀', '🟤 브라운 팀', '⚫ 블랙 팀'] },
-  { id: 'gems', name: '보석 (루비, 사파이어...)', prefixes: ['💎 다이아몬드', '❤️ 루비', '💙 사파이어', '💚 에메랄드', '💛 토파즈', '💜 아메시스트', '🖤 오팔', '🤍 진주'] },
-];
-
-const DEFAULT_MEMBERS: Member[] = [
-  { id: '1', name: '김철수', role: '기획팀', avatarColor: AVATAR_COLORS[0] },
-  { id: '2', name: '이영희', role: '개발팀', avatarColor: AVATAR_COLORS[1] },
-  { id: '3', name: '박민수', role: '디자인팀', avatarColor: AVATAR_COLORS[2] },
-  { id: '4', name: '정수진', role: '마케팅팀', avatarColor: AVATAR_COLORS[3] },
-  { id: '5', name: '최동현', role: '개발팀', avatarColor: AVATAR_COLORS[4] },
-  { id: '6', name: '한지원', role: '기획팀', avatarColor: AVATAR_COLORS[5] },
-  { id: '7', name: '윤지환', role: '디자인팀', avatarColor: AVATAR_COLORS[6] },
-  { id: '8', name: '강다솜', role: '마케팅팀', avatarColor: AVATAR_COLORS[7] },
-  { id: '9', name: '조현우', role: '기획팀', avatarColor: AVATAR_COLORS[0] },
-  { id: '10', name: '임채원', role: '개발팀', avatarColor: AVATAR_COLORS[1] },
-  { id: '11', name: '백승우', role: '개발팀', avatarColor: AVATAR_COLORS[2] },
-  { id: '12', name: '서미경', role: '디자인팀', avatarColor: AVATAR_COLORS[3] },
-];
 
 export default function App() {
-  // --- States ---
-  const [members, setMembers] = useState<Member[]>(() => {
-    const saved = localStorage.getItem('ts_members');
-    return saved ? JSON.parse(saved) : DEFAULT_MEMBERS;
-  });
+  // Authentication States
+  const [currentUser, setCurrentUser] = useState<any>(null);
+  const [appUser, setAppUser] = useState<AppUser | null>(null);
+  const [isAuthLoading, setIsAuthLoading] = useState<boolean>(true);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [users, setUsers] = useState<AppUser[]>([]);
+  const [showLoadingWarning, setShowLoadingWarning] = useState<boolean>(false);
 
-  const [teams, setTeams] = useState<Team[]>([]);
-  const [history, setHistory] = useState<ShuffleHistory[]>(() => {
-    const saved = localStorage.getItem('ts_history');
-    return saved ? JSON.parse(saved) : [];
-  });
+  useEffect(() => {
+    if (isAuthLoading) {
+      const timer = setTimeout(() => {
+        setShowLoadingWarning(true);
+      }, 3500);
+      return () => clearTimeout(timer);
+    } else {
+      setShowLoadingWarning(false);
+    }
+  }, [isAuthLoading]);
 
-  // Controls & Settings
-  const [targetType, setTargetType] = useState<'count' | 'size'>('count'); // Split by total number of teams, or max size per team
-  const [targetValue, setTargetValue] = useState<number>(3); // Default 3 teams / 3 members
-  const [selectedTheme, setSelectedTheme] = useState<string>('standard');
-  const [avoidSameRole, setAvoidSameRole] = useState<boolean>(true); // Balance same-department members across teams
+  // Departments State
+  const [departments, setDepartments] = useState<Department[]>(() => {
+    const saved = safeStorage.getItem('dept_departments');
+    if (saved) {
+      try { return JSON.parse(saved); } catch (e) { return []; }
+    }
+    return [];
+  });
   
-  // Animation state
-  const [isShuffling, setIsShuffling] = useState<boolean>(false);
-  const [shuffledIndicatorList, setShuffledIndicatorList] = useState<Member[]>([]);
-  const [activeFlippedCard, setActiveFlippedCard] = useState<number>(-1);
-  const [animationStep, setAnimationStep] = useState<'idle' | 'mixing' | 'building' | 'done'>('idle');
+  // Selected department ID
+  const [selectedDeptId, setSelectedDeptId] = useState<string | null>(() => {
+    return safeStorage.getItem('selected_dept_id') || null;
+  });
 
-  // New Member Modal/Inputs
-  const [newMemberName, setNewMemberName] = useState('');
-  const [newMemberRole, setNewMemberRole] = useState('');
-  const [newMemberPhoto, setNewMemberPhoto] = useState<string | undefined>(undefined);
-  const [avatarIndex, setAvatarIndex] = useState(0);
+  // Members State
+  const [members, setMembers] = useState<Member[]>(() => {
+    const saved = safeStorage.getItem('dept_members');
+    if (saved) {
+      try { return JSON.parse(saved); } catch (e) { return []; }
+    }
+    return [];
+  });
 
-  // CSV/Bulk Import
-  const [isBulkImportOpen, setIsBulkImportOpen] = useState(false);
-  const [bulkText, setBulkText] = useState('');
+  // Unlocked department IDs (session-based cache for password authorization)
+  const [unlockedDepts, setUnlockedDepts] = useState<string[]>([]);
 
-  // Editing utility
+  // Offline or online states
+  const [isOfflineMode, setIsOfflineMode] = useState<boolean>(() => {
+    return safeStorage.getItem('force_offline_mode') === 'true';
+  });
+  const [isDbLoading, setIsDbLoading] = useState<boolean>(() => {
+    return safeStorage.getItem('force_offline_mode') !== 'true';
+  });
+
+  // Navigation active steps: 1 = Member setup / 2 = Shuffling & Results / 3 = Users Management (Admin)
+  const [activeStep, setActiveStep] = useState<1 | 2 | 3>(1);
+
+  // Group size controls
+  const [groupCount, setGroupCount] = useState<number>(3);
+  const [groups, setGroups] = useState<Group[]>([]);
+  const [isAddMemberModalOpen, setIsAddMemberModalOpen] = useState(false);
   const [editingMember, setEditingMember] = useState<Member | null>(null);
 
-  // Clipboard copies
-  const [copiedResult, setCopiedResult] = useState(false);
+  // Department Modals & UI States
+  const [isDeptModalOpen, setIsDeptModalOpen] = useState(false);
+  const [editingDept, setEditingDept] = useState<Department | null>(null);
+  const [deptNameInput, setDeptNameInput] = useState('');
+  const [deptPasswordInput, setDeptPasswordInput] = useState('');
 
-  // File Input Ref
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const editFileInputRef = useRef<HTMLInputElement>(null);
+  // Password Verification Dialog States
+  const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
+  const [passwordTargetDeptId, setPasswordTargetDeptId] = useState<string | null>(null);
+  const [passwordInput, setPasswordInput] = useState('');
+  const [passwordSuccessCallback, setPasswordSuccessCallback] = useState<(() => void) | null>(null);
+  const [passwordErrorMsg, setPasswordErrorMsg] = useState('');
 
-  // Save to localStorage on member changes
+  // PWA (Progressive Web App) states
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [showInstallBadge, setShowInstallBadge] = useState<boolean>(true);
+  const [isInstallGuideOpen, setIsInstallGuideOpen] = useState(false);
+
+  // Shuffling states
+  const [isShuffling, setIsShuffling] = useState(false);
+  const [shufflePhase, setShufflePhase] = useState<'idle' | 'preparing' | 'scrambling' | 'positioning' | 'completed'>('idle');
+  const [activeShuffleMember, setActiveShuffleMember] = useState<Member | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [rulesCopied, setRulesCopied] = useState(false);
+
+  // Robust clipboard copy supporting standard and sandboxed environments (iframes/mobile)
+  const copyToClipboard = (text: string, onSuccess: () => void) => {
+    try {
+      if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text)
+          .then(() => {
+            onSuccess();
+          })
+          .catch((err) => {
+            console.warn('navigator.clipboard failed, attempting fallback:', err);
+            fallbackCopy(text, onSuccess);
+          });
+      } else {
+        fallbackCopy(text, onSuccess);
+      }
+    } catch (e) {
+      console.warn('copyToClipboard error, attempting fallback:', e);
+      fallbackCopy(text, onSuccess);
+    }
+  };
+
+  const fallbackCopy = (text: string, onSuccess: () => void) => {
+    try {
+      const textarea = document.createElement("textarea");
+      textarea.value = text;
+      textarea.style.position = "fixed";
+      textarea.style.top = "0";
+      textarea.style.left = "0";
+      textarea.style.opacity = "0";
+      textarea.style.pointerEvents = "none";
+      document.body.appendChild(textarea);
+      textarea.select();
+      textarea.setSelectionRange(0, 99999); // For mobile devices
+      const successful = document.execCommand("copy");
+      document.body.removeChild(textarea);
+      if (successful) {
+        onSuccess();
+      } else {
+        console.warn("Fallback copy execution command is unsuccessful");
+      }
+    } catch (err) {
+      console.error("Fallback copy execution threw error:", err);
+    }
+  };
+
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
+
   useEffect(() => {
-    localStorage.setItem('ts_members', JSON.stringify(members));
-  }, [members]);
+    const handler = (e: Event) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+      setShowInstallBadge(true);
+    };
+    window.addEventListener('beforeinstallprompt', handler);
 
-  // Save history to localStorage
+    const afterInstallHandler = () => {
+      console.log('TeamShuffle has been successfully installed!');
+      setDeferredPrompt(null);
+      setShowInstallBadge(false);
+    };
+    window.addEventListener('appinstalled', afterInstallHandler);
+
+    if (window.matchMedia('(display-mode: standalone)').matches || (navigator as any).standalone) {
+      setShowInstallBadge(false);
+    }
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handler);
+      window.removeEventListener('appinstalled', afterInstallHandler);
+    };
+  }, []);
+
+  const handleInstallClick = async () => {
+    if (deferredPrompt) {
+      deferredPrompt.prompt();
+      const { outcome } = await deferredPrompt.userChoice;
+      console.log(`User response to the install prompt: ${outcome}`);
+      setDeferredPrompt(null);
+      setShowInstallBadge(false);
+    } else {
+      setIsInstallGuideOpen(true);
+    }
+  };
+
+  // Helper to test structural authorization before doing mutation
+  const checkPasswordAuth = (deptId: string, action: () => void) => {
+    // If already unlocked in session, proceed immediately
+    if (unlockedDepts.includes(deptId)) {
+      action();
+      return;
+    }
+
+    // Find plain Department
+    const dept = departments.find(d => d.id === deptId);
+    if (!dept) {
+      alert('존재하지 않는 부서입니다.');
+      return;
+    }
+
+    // Trigger auth password modal
+    setPasswordTargetDeptId(deptId);
+    setPasswordInput('');
+    setPasswordErrorMsg('');
+    setPasswordSuccessCallback(() => () => {
+      action();
+    });
+    setIsPasswordModalOpen(true);
+  };
+
+  // Submit password input for authorization
+  const handleVerifyPassword = () => {
+    if (!passwordTargetDeptId) return;
+    const dept = departments.find(d => d.id === passwordTargetDeptId);
+    if (!dept) return;
+
+    if (dept.password === passwordInput) {
+      // Success
+      setUnlockedDepts(prev => [...prev, passwordTargetDeptId]);
+      setIsPasswordModalOpen(false);
+      if (passwordSuccessCallback) {
+        passwordSuccessCallback();
+      }
+    } else {
+      setPasswordErrorMsg('비밀번호가 일치하지 않습니다. 부서 생성 시 설정한 권한 비밀번호를 다시 확인하세요.');
+    }
+  };
+
+  const enableOfflineMode = () => {
+    safeStorage.setItem('force_offline_mode', 'true');
+    setIsOfflineMode(true);
+    setCurrentUser({ uid: 'offline', email: 'offline@teamshuffle.local' });
+    setAppUser({
+      uid: 'offline-user',
+      email: 'offline@teamshuffle.local',
+      displayName: '오프라인 관리자',
+      photoUrl: '',
+      approved: true,
+      role: 'admin',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+    setIsAuthLoading(false);
+  };
+
+  // Monitor auth state changes
   useEffect(() => {
-    localStorage.setItem('ts_history', JSON.stringify(history));
-  }, [history]);
+    if (safeStorage.getItem('force_offline_mode') === 'true') {
+      setCurrentUser({ uid: 'offline', email: 'offline@teamshuffle.local' });
+      setAppUser({
+        uid: 'offline-user',
+        email: 'offline@teamshuffle.local',
+        displayName: '오프라인 관리자',
+        photoUrl: '',
+        approved: true,
+        role: 'admin',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      });
+      setIsAuthLoading(false);
+      return;
+    }
 
-  // Handle avatar photo selection
-  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>, isEdit = false) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        if (isEdit && editingMember) {
-          setEditingMember({ ...editingMember, photoUrl: reader.result as string });
+    let unsubUserSnap: (() => void) | null = null;
+    let unsubscribe: (() => void) | null = null;
+
+    // Safety timeout to prevent getting stuck on loading screen if Firebase Auth hangs
+    const authTimeout = setTimeout(() => {
+      console.warn('Firebase connection / initialization is taking longer than usual.');
+      setIsAuthLoading(false);
+    }, 8000);
+
+    try {
+      unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+        // Clean up previous snapshots
+        if (unsubUserSnap) {
+          unsubUserSnap();
+          unsubUserSnap = null;
+        }
+
+        if (firebaseUser) {
+          setCurrentUser(firebaseUser);
+          
+          let initCompleted = false;
+          // Sub-timer to prevent firestore hang from freezing the loading UI
+          const fetchTimeout = setTimeout(() => {
+            if (!initCompleted) {
+              console.warn('Firestore user fetch taking longer than usual. Force un-sticking loading screen.');
+              setIsAuthLoading(false);
+            }
+          }, 7000);
+          
+          try {
+            const getDocWithRetry = async (docRef: any, maxRetries = 3, delayMs = 1500) => {
+              let lastErr: any;
+              for (let i = 0; i < maxRetries; i++) {
+                try {
+                  const docPromise = getDoc(docRef);
+                  const timeoutPromise = new Promise<never>((_, reject) =>
+                    setTimeout(() => reject(new Error('Failed to get document because the client is offline (timeout)')), 3500)
+                  );
+                  return await Promise.race([docPromise, timeoutPromise]);
+                } catch (err: any) {
+                  lastErr = err;
+                  const errMsg = err?.message || String(err);
+                  if (
+                    errMsg.includes('offline') ||
+                    errMsg.toLowerCase().includes('failed to get document') ||
+                    errMsg.toLowerCase().includes('client is offline') ||
+                    errMsg.toLowerCase().includes('network') ||
+                    errMsg.toLowerCase().includes('timeout')
+                  ) {
+                    console.warn(`Firestore getDoc failed (attempt ${i + 1}/${maxRetries}). Retrying in ${delayMs}ms...`);
+                    await new Promise(resolve => setTimeout(resolve, delayMs));
+                    continue;
+                  }
+                  throw err;
+                }
+              }
+              throw lastErr;
+            };
+
+            const userDocRef = doc(db, 'users', firebaseUser.uid);
+            const userSnap = await getDocWithRetry(userDocRef);
+            
+            let fetchedUser: AppUser;
+            if (!userSnap.exists()) {
+              const now = new Date().toISOString();
+              const emailLower = (firebaseUser.email || '').toLowerCase();
+              const isSuperAdminEmail = emailLower === 'gukhyunglee@gmail.com';
+              
+              fetchedUser = {
+                uid: firebaseUser.uid,
+                email: firebaseUser.email || '',
+                displayName: firebaseUser.displayName || '사용자',
+                photoUrl: firebaseUser.photoURL || '',
+                approved: isSuperAdminEmail,
+                role: isSuperAdminEmail ? 'admin' : 'user',
+                createdAt: now,
+                updatedAt: now
+              };
+              await setDoc(userDocRef, fetchedUser);
+            } else {
+              fetchedUser = userSnap.data() as AppUser;
+            }
+
+            // Force dynamic Super Admin tier upgrade if the user is gukhyunglee@gmail.com
+            const emailLower = (firebaseUser.email || '').toLowerCase();
+            if (emailLower === 'gukhyunglee@gmail.com') {
+              if (fetchedUser.role !== 'admin' || !fetchedUser.approved) {
+                fetchedUser.role = 'admin';
+                fetchedUser.approved = true;
+                await setDoc(userDocRef, fetchedUser, { merge: true });
+              }
+            }
+
+            setAppUser(fetchedUser);
+            setAuthError(null); // Clear previous errors if successful
+          } catch (err: any) {
+            console.error('Error fetching/creating user profile:', err);
+            let errMsg = err?.message || String(err);
+            if (errMsg.includes('permission') || errMsg.includes('Permission') || errMsg.includes('PERMISSION_DENIED') || errMsg.includes('insufficient')) {
+              setAuthError('Firestore 연동 실패: 데이터베이스 권한이 부족합니다. Firebase Console의 [Firestore Database] > [Rules] 탭에 적절한 보안 규칙이 설정되어 있는지 확인하세요.');
+            } else if (errMsg.includes('timeout') || errMsg.includes('offline')) {
+              setAuthError('Firestore 연결 타임아웃: 데이터베이스를 찾을 수 없거나 연결할 수 없습니다. Firebase Console에서 [Firestore Database]가 실제로 "Create(생성)" 되었는지 확인해주세요.');
+            } else {
+              setAuthError(`사용자 정보를 데이터베이스에서 불러오지 못했습니다: ${errMsg}`);
+            }
+            setIsAuthLoading(false);
+            return;
+          }
+
+          // Set up snapshot observer to listen for real-time manager approval
+          try {
+            const userDocRef = doc(db, 'users', firebaseUser.uid);
+            unsubUserSnap = onSnapshot(userDocRef, (docSnap) => {
+              if (docSnap.exists()) {
+                const updatedUser = docSnap.data() as AppUser;
+                const emailLower = (firebaseUser.email || '').toLowerCase();
+                if (emailLower === 'gukhyunglee@gmail.com') {
+                  updatedUser.role = 'admin';
+                  updatedUser.approved = true;
+                }
+                setAppUser(updatedUser);
+              }
+            }, (err: any) => {
+              console.error('User snapshot error:', err);
+              let errMsg = err?.message || String(err);
+              if (errMsg.includes('permission') || errMsg.includes('Permission') || errMsg.includes('PERMISSION_DENIED') || errMsg.includes('insufficient')) {
+                setAuthError('Firestore 실시간 갱신 권한 오류가 발생했습니다. 개인 Firebase 설정의 [Rules]에 보안 규칙이 배포되어 있어야 합니다.');
+              }
+            });
+          } catch (snapshotErr) {
+            console.error('Failed to set up user snapshot observer:', snapshotErr);
+          }
+
+          initCompleted = true;
+          clearTimeout(fetchTimeout);
+          clearTimeout(authTimeout);
+          setIsAuthLoading(false);
         } else {
-          setNewMemberPhoto(reader.result as string);
+          setCurrentUser(null);
+          setAppUser(null);
+          clearTimeout(authTimeout);
+          setIsAuthLoading(false);
         }
-      };
-      reader.readAsDataURL(file);
+      });
+    } catch (authInitErr: any) {
+      console.error('onAuthStateChanged registration failed:', authInitErr);
+      clearTimeout(authTimeout);
+      setIsAuthLoading(false);
+      setAuthError(`Firebase Auth 초기화 오류: ${authInitErr?.message || authInitErr}`);
     }
-  };
 
-  // Trigger file manager click
-  const triggerFileSelect = (isEdit = false) => {
-    if (isEdit) {
-      editFileInputRef.current?.click();
-    } else {
-      fileInputRef.current?.click();
-    }
-  };
-
-  // Add individual member
-  const handleAddMember = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newMemberName.trim()) return;
-
-    const newMember: Member = {
-      id: Date.now().toString(),
-      name: newMemberName.trim(),
-      role: newMemberRole.trim() || '일반원',
-      avatarColor: AVATAR_COLORS[avatarIndex % AVATAR_COLORS.length],
-      photoUrl: newMemberPhoto,
+    return () => {
+      clearTimeout(authTimeout);
+      if (unsubscribe) {
+        unsubscribe();
+      }
+      if (unsubUserSnap) {
+        unsubUserSnap();
+      }
     };
+  }, [isOfflineMode]);
 
-    setMembers([...members, newMember]);
-    setNewMemberName('');
-    setNewMemberRole('');
-    setNewMemberPhoto(undefined);
-    setAvatarIndex(prev => prev + 1);
-  };
-
-  // Edit / Update Member
-  const handleSaveEdit = () => {
-    if (!editingMember || !editingMember.name.trim()) return;
-    setMembers(members.map(m => m.id === editingMember.id ? editingMember : m));
-    setEditingMember(null);
-  };
-
-  // Delete individual member
-  const handleDeleteMember = (id: string) => {
-    setMembers(members.filter(m => m.id !== id));
-  };
-
-  // Clear all members
-  const handleClearAllMembers = () => {
-    if (window.confirm('정말 모든 부서원 목록을 삭제하시겠습니까?')) {
-      setMembers([]);
+  // Subscribe to all users if current user is an admin
+  useEffect(() => {
+    if (!appUser || appUser.role !== 'admin') {
+      setUsers([]);
+      return;
     }
-  };
 
-  // Restore default preloaded members
-  const handleRestoreDefaults = () => {
-    if (window.confirm('기본 예시 부서원 목록(12명)으로 복구하시겠습니까? 현재 목록은 덮어쓰기 됩니다.')) {
-      setMembers(DEFAULT_MEMBERS);
-    }
-  };
-
-  // Bulk Import logic
-  const handleBulkImport = () => {
-    if (!bulkText.trim()) return;
-    // Lines can have formats: "Name", "Name Department", "Name, Department"
-    const lines = bulkText.split('\n');
-    const imported: Member[] = [];
-    let colorCursor = avatarIndex;
-
-    lines.forEach(line => {
-      const cleaned = line.trim();
-      if (!cleaned) return;
-
-      let name = cleaned;
-      let role = '일반원';
-
-      // Split by comma or tab or spaces
-      const parts = cleaned.indexOf(',') !== -1 
-        ? cleaned.split(',') 
-        : cleaned.split(/\s+/);
-
-      if (parts.length > 1) {
-        name = parts[0].trim();
-        role = parts.slice(1).join(' ').trim();
-      }
-
-      if (name) {
-        imported.push({
-          id: `${Date.now()}-${Math.random()}`,
-          name: name,
-          role: role || '일반원',
-          avatarColor: AVATAR_COLORS[colorCursor % AVATAR_COLORS.length]
-        });
-        colorCursor++;
-      }
+    const usersRef = collection(db, 'users');
+    const unsubscribe = onSnapshot(usersRef, (snap) => {
+      const loadedUsers: AppUser[] = [];
+      snap.forEach((docSnap) => {
+        loadedUsers.push(docSnap.data() as AppUser);
+      });
+      const sortedUsers = loadedUsers.sort((a, b) => {
+        if (a.role === 'admin' && b.role !== 'admin') return -1;
+        if (a.role !== 'admin' && b.role === 'admin') return 1;
+        if (a.approved && !b.approved) return 1;
+        if (!a.approved && b.approved) return -1;
+        return a.displayName.localeCompare(b.displayName);
+      });
+      setUsers(sortedUsers);
+    }, (err) => {
+      console.error('Error fetching users:', err);
     });
 
-    setMembers([...members, ...imported]);
-    setAvatarIndex(colorCursor);
-    setBulkText('');
-    setIsBulkImportOpen(false);
-  };
+    return () => unsubscribe();
+  }, [appUser]);
 
-  // --- Core Shuffle Algorithm ---
-  const performShuffle = () => {
-    if (members.length === 0) return;
-
-    setIsShuffling(true);
-    setAnimationStep('mixing');
-    setTeams([]);
-
-    // We do a theatrical multi-phase animation
-    // Mix items, flash active items, then render layout
-    let shuffleCounter = 0;
-    const interval = setInterval(() => {
-      // Pick dynamic highlighted items to simulate "rapid machine shuffling" name generator
-      const randomIndex = Math.floor(Math.random() * members.length);
-      setActiveFlippedCard(randomIndex);
-      shuffleCounter++;
+  // Handle auth actions
+  const handleGoogleLogin = async () => {
+    try {
+      setAuthError(null);
+      setIsAuthLoading(true); // Indent load feedback immediately
+      // Synchronous popup trigger from user-gesture click context
+      await loginWithGoogle();
+    } catch (err: any) {
+      console.error('Google Sign-In Error:', err);
+      let errMsg = err?.message || String(err);
       
-      if (shuffleCounter > 18) {
-        clearInterval(interval);
-        
-        // Post mix: Proceed to compute teams build
-        setActiveFlippedCard(-1);
-        setAnimationStep('building');
-        
-        setTimeout(() => {
-          executeTeamSplitting();
-        }, 600);
+      // Categorize and provide friendly instructions in Korean
+      if (err?.code === 'auth/popup-blocked') {
+        errMsg = '브라우저에서 팝업이 차단되었습니다. 주소창 우측 또는 브라우저 설정을 통해 팝업창 허용을 승인해주시기 바랍니다.';
+      } else if (err?.code === 'auth/unauthorized-domain' || errMsg?.includes('unauthorized-domain') || errMsg?.includes('unauthorized_domain') || errMsg?.includes('identity-services/web/unauthorized-domain')) {
+        errMsg = 'Firebase 인증 승인 도메인(Authorized Domain) 설정이 완료되지 않았습니다. 관리자 계정으로 [Firebase Console > Authentication > Settings > Authorized domains]에 현재 도메인을 추가해야 합니다.';
+      } else if (errMsg?.includes('iframe') || errMsg?.includes('cookie') || errMsg?.includes('cross-origin') || errMsg?.includes('network-request-failed') || errMsg?.includes('storage') || errMsg?.includes('partitioned')) {
+        errMsg = '브라우저의 iframe 보안 정책으로 인해 로그인이 실패했습니다. 위 🔔 알림의 [새 창에서 실행하기] 버튼을 통해 독립된 새 탭에서 열어주세요.';
+      } else {
+        errMsg = `로그인 중 오류가 발생했습니다: ${errMsg}`;
       }
-    }, 120);
+      
+      setAuthError(errMsg);
+      setIsAuthLoading(false);
+    }
   };
 
-  const executeTeamSplitting = () => {
-    // 1. Shallow copy of members
-    const shuffledList = [...members];
-    
-    // Simple Fisher-Yates shuffle
-    for (let i = shuffledList.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [shuffledList[i], shuffledList[j]] = [shuffledList[j], shuffledList[i]];
+  const handleGoogleRedirectLogin = async () => {
+    try {
+      setAuthError(null);
+      setIsAuthLoading(true);
+      await loginWithGoogleRedirect();
+    } catch (err: any) {
+      console.error('Google Redirect Sign-In Error:', err);
+      let errMsg = err?.message || String(err);
+      setAuthError(`리다이렉트 로그인 실패: ${errMsg}`);
+      setIsAuthLoading(false);
     }
+  };
 
-    // 2. Determine perfect number of teams
-    let numTeams = 3;
-    if (targetType === 'count') {
-      numTeams = Math.max(1, Math.min(targetValue, members.length));
+  const handleLogoutAction = async () => {
+    try {
+      safeStorage.removeItem('force_offline_mode');
+      setIsOfflineMode(false);
+      setIsDbLoading(true);
+      await logout();
+      setCurrentUser(null);
+      setAppUser(null);
+      
+      // Force whole-page soft reload to purge and reset all in-memory React and listener states
+      window.location.reload();
+    } catch (err) {
+      console.error('Sign out error:', err);
+      // Fallback state clearing in case Firebase signOut throws due to network or config errors
+      setCurrentUser(null);
+      setAppUser(null);
+      window.location.reload();
+    }
+  };
+
+  // Admin user approval actions
+  const handleToggleApproval = async (targetUser: AppUser) => {
+    if (targetUser.uid === appUser?.uid) {
+      alert('본인의 승인 상태는 수정할 수 없습니다.');
+      return;
+    }
+    const userRef = doc(db, 'users', targetUser.uid);
+    try {
+      await updateDoc(userRef, {
+        approved: !targetUser.approved,
+        updatedAt: new Date().toISOString()
+      });
+    } catch (err) {
+      alert('승인 상태 변경에 실패했습니다: ' + err);
+    }
+  };
+
+  const handleToggleRole = async (targetUser: AppUser) => {
+    if (targetUser.uid === appUser?.uid) {
+      alert('본인의 권한은 변경할 수 없습니다.');
+      return;
+    }
+    const userRef = doc(db, 'users', targetUser.uid);
+    const newRole = targetUser.role === 'admin' ? 'user' : 'admin';
+    try {
+      await updateDoc(userRef, {
+        role: newRole,
+        updatedAt: new Date().toISOString()
+      });
+    } catch (err) {
+      alert('권한 변경에 실패했습니다: ' + err);
+    }
+  };
+
+  const handleDeleteUser = async (targetUserId: string) => {
+    if (targetUserId === appUser?.uid) {
+      alert('본인 계정은 삭제할 수 없습니다.');
+      return;
+    }
+    if (!window.confirm('정말로 이 사용자를 삭제하시겠습니까? 등록된 사용자 프로필 기록이 완전히 제거됩니다.')) {
+      return;
+    }
+    const userRef = doc(db, 'users', targetUserId);
+    try {
+      await deleteDoc(userRef);
+    } catch (err) {
+      alert('사용자 삭제에 실패했습니다: ' + err);
+    }
+  };
+
+  // Sync state variables with active changes
+  useEffect(() => {
+    if (selectedDeptId) {
+      safeStorage.setItem('selected_dept_id', selectedDeptId);
     } else {
-      // size per team
-      numTeams = Math.max(1, Math.ceil(members.length / targetValue));
+      safeStorage.removeItem('selected_dept_id');
+    }
+  }, [selectedDeptId]);
+
+  // Real-time Cloud Synchronization of Departments & Members
+  useEffect(() => {
+    if (!appUser || !appUser.approved) {
+      setIsDbLoading(false);
+      return;
     }
 
-    // Setup empty teams base
-    const themeObj = GROUP_THEMES.find(t => t.id === selectedTheme) || GROUP_THEMES[0];
-    const generatedTeams: Team[] = Array.from({ length: numTeams }, (_, i) => {
-      const teamName = themeObj.prefixes[i % themeObj.prefixes.length] || `팀 ${i + 1}`;
-      return {
-        id: `team-${i}`,
-        name: teamName,
-        color: TEAM_THEME_COLORS[i % TEAM_THEME_COLORS.length].badge,
-        members: []
-      };
-    });
-
-    // 3. Balance distribution with role grouping if toggle is enabled
-    if (avoidSameRole) {
-      // Group by roles
-      const roleGroups: { [key: string]: Member[] } = {};
-      shuffledList.forEach(m => {
-        const r = m.role.toLowerCase().trim();
-        if (!roleGroups[r]) roleGroups[r] = [];
-        roleGroups[r].push(m);
-      });
-
-      // Distribute each role group to minimize same-role clustering in one group
-      let currentTeamIdx = 0;
-      Object.keys(roleGroups).forEach(role => {
-        const groupMembers = roleGroups[role];
-        groupMembers.forEach(m => {
-          generatedTeams[currentTeamIdx].members.push(m);
-          currentTeamIdx = (currentTeamIdx + 1) % numTeams;
-        });
-      });
-    } else {
-      // Standard simple round-robin distribution
-      shuffledList.forEach((m, idx) => {
-        const teamIdx = idx % numTeams;
-        generatedTeams[teamIdx].members.push(m);
-      });
+    if (safeStorage.getItem('force_offline_mode') === 'true') {
+      setIsOfflineMode(true);
+      setIsDbLoading(false);
+      return;
     }
 
-    // Sort teams to look nice or random balance
-    setTeams(generatedTeams);
-    setIsShuffling(false);
-    setAnimationStep('done');
+    let unsubscribeDepts: (() => void) | null = null;
+    let unsubscribeMembers: (() => void) | null = null;
+    let syncDone = false;
+    let syncTimeout: NodeJS.Timeout | null = null;
 
-    // Trigger wonderful confetti celebration
-    triggerConfettiCelebrate();
-
-    // Save this gorgeous result into histories
-    const newHistory: ShuffleHistory = {
-      id: Date.now().toString(),
-      date: new Date().toLocaleDateString('ko-KR', {
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-      }),
-      teams: generatedTeams,
-      themeName: themeObj.name,
-    };
-    setHistory(prev => [newHistory, ...prev].slice(0, 15)); // Keep last 15 shuffles
-  };
-
-  // Standard colorful confetti burst
-  const triggerConfettiCelebrate = () => {
-    const duration = 2.5 * 1000;
-    const end = Date.now() + duration;
-
-    (function frame() {
-      confetti({
-        particleCount: 3,
-        angle: 60,
-        spread: 55,
-        origin: { x: 0 },
-        colors: ['#6366f1', '#10b981', '#f59e0b', '#ec4899', '#3b82f6']
-      });
-      confetti({
-        particleCount: 3,
-        angle: 120,
-        spread: 55,
-        origin: { x: 1 },
-        colors: ['#6366f1', '#10b981', '#f59e0b', '#ec4899', '#3b82f6']
-      });
-
-      if (Date.now() < end) {
-        requestAnimationFrame(frame);
+    function fallbackToOffline(reason: any) {
+      if (syncDone) return;
+      console.warn('Real-time sync failed. Falling back to local cache mode:', reason);
+      setIsOfflineMode(true);
+      
+      const savedDepts = safeStorage.getItem('dept_departments');
+      if (savedDepts) {
+        try { setDepartments(JSON.parse(savedDepts)); } catch (e) { setDepartments([]); }
       }
-    }());
-  };
-
-  // Reset/Clear teams
-  const handleResetTeams = () => {
-    setTeams([]);
-    setAnimationStep('idle');
-  };
-
-  // Copy Results to Clipboard
-  const handleCopyResults = () => {
-    if (teams.length === 0) return;
-    
-    let text = `🎉 【 TeamShuffle ] 흩어져있던 우리가 하나되는 시간 🎉\n`;
-    text += `조 편성 테마: ${GROUP_THEMES.find(t => t.id === selectedTheme)?.name || '일반'}\n\n`;
-
-    teams.forEach(team => {
-      text += `📍 ${team.name} (${team.members.length}명)\n`;
-      text += `━━━━━━━━━━━━━━\n`;
-      text += team.members.map(m => ` - ${m.name} (${m.role})`).join('\n') || ' (지정된 부서원 없음)';
-      text += `\n\n`;
-    });
-
-    navigator.clipboard.writeText(text).then(() => {
-      setCopiedResult(true);
-      setTimeout(() => setCopiedResult(false), 2000);
-    });
-  };
-
-  // Remove history item
-  const handleDeleteHistory = (histId: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    setHistory(history.filter(h => h.id !== histId));
-  };
-
-  // Load old shuffle
-  const handleLoadHistory = (hist: ShuffleHistory) => {
-    setTeams(hist.teams);
-    setAnimationStep('done');
-  };
-
-  // Manual Member swaps Drag/Drop or Move between teams
-  const moveMemberToTeam = (memberId: string, targetTeamId: string) => {
-    // Find member
-    let memberToMove: Member | null = null;
-    const updatedTeams = teams.map(team => {
-      const exists = team.members.find(m => m.id === memberId);
-      if (exists) {
-        memberToMove = exists;
-        return {
-          ...team,
-          members: team.members.filter(m => m.id !== memberId)
-        };
+      const savedMembers = safeStorage.getItem('dept_members');
+      if (savedMembers) {
+        try { setMembers(JSON.parse(savedMembers)); } catch (e) { setMembers([]); }
       }
-      return team;
-    });
+      setIsDbLoading(false);
+    }
 
-    if (memberToMove) {
-      const finalTeams = updatedTeams.map(team => {
-        if (team.id === targetTeamId) {
-          return {
-            ...team,
-            members: [...team.members, memberToMove!]
-          };
+    async function initializeSync() {
+      syncTimeout = setTimeout(() => {
+        if (!syncDone) {
+          console.warn('Sync timed out. Switching to offline backup.');
+          if (unsubscribeDepts) { unsubscribeDepts(); unsubscribeDepts = null; }
+          if (unsubscribeMembers) { unsubscribeMembers(); unsubscribeMembers = null; }
+          fallbackToOffline('Firestore responsive timeout (3.5s)');
         }
-        return team;
+      }, 3500);
+
+      try {
+        await authenticateApp();
+
+        const deptsRef = collection(db, 'departments');
+        const membersRef = collection(db, 'members');
+
+        // 1. Snapshot for Departments
+        unsubscribeDepts = onSnapshot(deptsRef, async (deptSnap) => {
+          syncDone = true;
+          if (syncTimeout) {
+            clearTimeout(syncTimeout);
+            syncTimeout = null;
+          }
+          setIsOfflineMode(false);
+          setIsDbLoading(false);
+
+          if (deptSnap.empty) {
+            // Seed default departments & members
+            console.log('Seed-checking: Firestore empty. Starting default seeding...');
+            const batch = writeBatch(db);
+
+            const deptTechId = 'dept-tech';
+            const deptStrategyId = 'dept-strategy';
+
+            const isoNow = new Date().toISOString();
+
+            // Seed departments
+            batch.set(doc(db, 'departments', deptTechId), {
+              name: '기술 연구소',
+              password: '1234',
+              createdAt: isoNow,
+              updatedAt: isoNow
+            });
+
+            batch.set(doc(db, 'departments', deptStrategyId), {
+              name: '전략 기획본부',
+              password: '1234',
+              createdAt: isoNow,
+              updatedAt: isoNow
+            });
+
+            // Seed mapped members
+            DEFAULT_MEMBERS.forEach((m, idx) => {
+              // Dev-tech allocation vs Strategy allocation
+              const isTech = ['m1', 'm3', 'm5', 'm7', 'm11'].includes(m.id);
+              const targetDeptId = isTech ? deptTechId : deptStrategyId;
+              const mIso = new Date(Date.now() - idx * 1000).toISOString();
+
+              batch.set(doc(db, 'members', m.id), {
+                departmentId: targetDeptId,
+                name: m.name,
+                role: m.role || '부서원',
+                photoUrl: m.photoUrl,
+                selected: true,
+                createdAt: mIso,
+                updatedAt: mIso
+              });
+            });
+
+            try {
+              await withTimeout(batch.commit());
+            } catch (err) {
+              console.warn('Seeding failed:', err);
+              fallbackToOffline(err);
+            }
+            return;
+          }
+
+          // Load Departments
+          const loadedDepts: Department[] = [];
+          deptSnap.forEach((docSnap) => {
+            const data = docSnap.data();
+            loadedDepts.push({
+              id: docSnap.id,
+              name: data.name || '',
+              password: data.password || '1234',
+              createdAt: data.createdAt || new Date().toISOString(),
+              updatedAt: data.updatedAt || new Date().toISOString()
+            });
+          });
+
+          // Sort by createdAt
+          const sortedDepts = loadedDepts.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+          setDepartments(sortedDepts);
+
+          // If no active department selected, default select the first one
+          if (sortedDepts.length > 0 && !selectedDeptId) {
+            setSelectedDeptId(sortedDepts[0].id);
+          }
+        }, (err) => {
+          console.warn('Departments subscription blocked:', err);
+          fallbackToOffline(err);
+        });
+
+        // 2. Snapshot for Members
+        unsubscribeMembers = onSnapshot(membersRef, (memberSnap) => {
+          const loadedMembers: Member[] = [];
+          memberSnap.forEach((docSnap) => {
+            const data = docSnap.data();
+            loadedMembers.push({
+              id: docSnap.id,
+              departmentId: data.departmentId || '',
+              name: data.name || '',
+              role: data.role || '부서원',
+              photoUrl: data.photoUrl || '',
+              selected: data.selected !== false,
+              createdAt: data.createdAt || new Date().toISOString(),
+              updatedAt: data.updatedAt || new Date().toISOString()
+            });
+          });
+
+          const sortedMembers = loadedMembers.sort((a, b) => {
+            const dateA = a.createdAt || '';
+            const dateB = b.createdAt || '';
+            return dateB.localeCompare(dateA);
+          });
+
+          setMembers(sortedMembers);
+        }, (err) => {
+          console.warn('Members subscription blocked:', err);
+        });
+
+      } catch (err) {
+        if (syncTimeout) { clearTimeout(syncTimeout); syncTimeout = null; }
+        console.error('Failed to init sync:', err);
+        fallbackToOffline(err);
+      }
+    }
+
+    initializeSync();
+
+    return () => {
+      if (unsubscribeDepts) unsubscribeDepts();
+      if (unsubscribeMembers) unsubscribeMembers();
+    };
+  }, [selectedDeptId, appUser]);
+
+  // Seed local storage with default if absolutely empty in offline mode
+  useEffect(() => {
+    if (isOfflineMode && departments.length === 0) {
+      const deptTechId = 'dept-tech';
+      const deptStrategyId = 'dept-strategy';
+      const isoNow = new Date().toISOString();
+
+      const demoDepts: Department[] = [
+        { id: deptTechId, name: '기술 연구소', password: '1234', createdAt: isoNow, updatedAt: isoNow },
+        { id: deptStrategyId, name: '전략 기획본부', password: '1234', createdAt: isoNow, updatedAt: isoNow }
+      ];
+
+      const demoMembers: Member[] = DEFAULT_MEMBERS.map((m, idx) => {
+        const isTech = ['m1', 'm3', 'm5', 'm7', 'm11'].includes(m.id);
+        const targetDeptId = isTech ? deptTechId : deptStrategyId;
+        const mIso = new Date(Date.now() - idx * 1000).toISOString();
+        return {
+          ...m,
+          departmentId: targetDeptId,
+          selected: true,
+          createdAt: mIso,
+          updatedAt: mIso
+        };
       });
-      setTeams(finalTeams);
+
+      setDepartments(demoDepts);
+      setMembers(demoMembers);
+      setSelectedDeptId(deptTechId);
+    }
+  }, [isOfflineMode]);
+
+  // Sync to localStorage
+  useEffect(() => {
+    if (departments.length > 0) {
+      safeStorage.setItem('dept_departments', JSON.stringify(departments));
+    }
+    if (members.length > 0) {
+      safeStorage.setItem('dept_members', JSON.stringify(members));
+    }
+  }, [departments, members]);
+
+  // Read filtered members belonging to active selected department
+  const filteredMembers = useMemo(() => {
+    if (!selectedDeptId) return [];
+    return members.filter(m => m.departmentId === selectedDeptId);
+  }, [members, selectedDeptId]);
+
+  // Adjust group count boundary if active members change
+  useEffect(() => {
+    const activeSelectedCount = filteredMembers.filter(m => m.selected !== false).length;
+    if (groupCount > Math.max(1, activeSelectedCount)) {
+      setGroupCount(Math.max(1, activeSelectedCount));
+    }
+  }, [filteredMembers, groupCount]);
+
+  // Add Department (Local & Global)
+  const handleCreateDepartment = async () => {
+    if (!deptNameInput.trim()) return;
+    const passwordRaw = deptPasswordInput.trim() || '1234';
+
+    const newId = `dept-${Date.now()}`;
+    const isoNow = new Date().toISOString();
+
+    const newDept: Department = {
+      id: newId,
+      name: deptNameInput.trim(),
+      password: passwordRaw,
+      createdAt: isoNow,
+      updatedAt: isoNow
+    };
+
+    if (isOfflineMode) {
+      setDepartments(prev => [...prev, newDept]);
+      setSelectedDeptId(newId);
+      // Auto unlock newly created dept
+      setUnlockedDepts(prev => [...prev, newId]);
+      setIsDeptModalOpen(false);
+      setDeptNameInput('');
+      setDeptPasswordInput('');
+      return;
+    }
+
+    try {
+      await withTimeout(setDoc(doc(db, 'departments', newId), {
+        name: newDept.name,
+        password: newDept.password,
+        createdAt: isoNow,
+        updatedAt: isoNow
+      }));
+      setUnlockedDepts(prev => [...prev, newId]);
+      setSelectedDeptId(newId);
+      setIsDeptModalOpen(false);
+      setDeptNameInput('');
+      setDeptPasswordInput('');
+    } catch (err) {
+      console.warn('Firestore create dept failed. Cache mode active:', err);
+      setIsOfflineMode(true);
+      setDepartments(prev => [...prev, newDept]);
+      setSelectedDeptId(newId);
+      setUnlockedDepts(prev => [...prev, newId]);
+      setIsDeptModalOpen(false);
+      setDeptNameInput('');
+      setDeptPasswordInput('');
     }
   };
 
-  // Helper render for avatars
-  const renderAvatar = (member: Member, sizeClass = "w-10 h-10 text-sm") => {
-    if (member.photoUrl) {
-      return (
-        <img 
-          src={member.photoUrl} 
-          alt={member.name} 
-          className={`${sizeClass} rounded-full object-cover border-2 border-white ring-2 ring-indigo-50`} 
-        />
+  // Edit Department Info (Requires validation)
+  const handleUpdateDepartment = async () => {
+    if (!editingDept || !deptNameInput.trim()) return;
+    const passwordRaw = deptPasswordInput.trim() || editingDept.password || '1234';
+
+    const targetId = editingDept.id;
+    const isoNow = new Date().toISOString();
+
+    const action = async () => {
+      if (isOfflineMode) {
+        setDepartments(prev => prev.map(d => d.id === targetId ? { ...d, name: deptNameInput.trim(), password: passwordRaw, updatedAt: isoNow } : d));
+        setIsDeptModalOpen(false);
+        setEditingDept(null);
+        setDeptNameInput('');
+        setDeptPasswordInput('');
+        return;
+      }
+
+      try {
+        await withTimeout(updateDoc(doc(db, 'departments', targetId), {
+          name: deptNameInput.trim(),
+          password: passwordRaw,
+          updatedAt: isoNow
+        }));
+        setIsDeptModalOpen(false);
+        setEditingDept(null);
+        setDeptNameInput('');
+        setDeptPasswordInput('');
+      } catch (err) {
+        console.warn('Firestore update dept failed:', err);
+        setIsOfflineMode(true);
+        setDepartments(prev => prev.map(d => d.id === targetId ? { ...d, name: deptNameInput.trim(), password: passwordRaw, updatedAt: isoNow } : d));
+        setIsDeptModalOpen(false);
+        setEditingDept(null);
+        setDeptNameInput('');
+        setDeptPasswordInput('');
+      }
+    };
+
+    checkPasswordAuth(targetId, action);
+  };
+
+  // Delete Department and all nested members
+  const handleDeleteDepartment = async (deptId: string) => {
+    if (departments.length <= 1) {
+      alert('최소 1개 이상의 부서가 존재해야 합니다.');
+      return;
+    }
+
+    if (!window.confirm('이 부서와 부서에 속한 모든 팀원 데이터가 영구 삭제됩니다. 정말 삭제하시겠습니까?')) {
+      return;
+    }
+
+    const action = async () => {
+      // Find dynamic next selector department
+      const remaining = departments.filter(d => d.id !== deptId);
+      const nextDeptId = remaining[0]?.id || null;
+
+      if (isOfflineMode) {
+        setDepartments(prev => prev.filter(d => d.id !== deptId));
+        setMembers(prev => prev.filter(m => m.departmentId !== deptId));
+        setSelectedDeptId(nextDeptId);
+        return;
+      }
+
+      try {
+        const batch = writeBatch(db);
+        // Delete department
+        batch.delete(doc(db, 'departments', deptId));
+        // Delete orphaned members
+        members.filter(m => m.departmentId === deptId).forEach(m => {
+          batch.delete(doc(db, 'members', m.id));
+        });
+
+        await withTimeout(batch.commit());
+        setSelectedDeptId(nextDeptId);
+      } catch (err) {
+        console.warn('Firestore delete dept failed:', err);
+        setIsOfflineMode(true);
+        setDepartments(prev => prev.filter(d => d.id !== deptId));
+        setMembers(prev => prev.filter(m => m.departmentId !== deptId));
+        setSelectedDeptId(nextDeptId);
+      }
+    };
+
+    checkPasswordAuth(deptId, action);
+  };
+
+  // Toggle Single Member Selected state (No Password Lock out needed for plain selecting to participate in Shuffle)
+  const handleToggleSelect = async (id: string) => {
+    const target = members.find((m) => m.id === id);
+    if (!target) return;
+
+    if (isOfflineMode) {
+      setMembers((prev) =>
+        prev.map((m) =>
+          m.id === id ? { ...m, selected: m.selected === false, updatedAt: new Date().toISOString() } : m
+        )
+      );
+      return;
+    }
+
+    try {
+      await withTimeout(updateDoc(doc(db, 'members', id), {
+        selected: target.selected === false,
+        updatedAt: new Date().toISOString(),
+      }));
+    } catch (err) {
+      console.warn('Firestore toggle select failed:', err);
+      setIsOfflineMode(true);
+      setMembers((prev) =>
+        prev.map((m) =>
+          m.id === id ? { ...m, selected: m.selected === false, updatedAt: new Date().toISOString() } : m
+        )
       );
     }
-    return (
-      <div className={`${sizeClass} rounded-full flex items-center justify-center font-bold border ${member.avatarColor}`}>
-        {member.name.slice(-2)}
-      </div>
+  };
+
+  // Bulk Select / Deselect All for active department
+  const handleToggleAll = async (select: boolean) => {
+    if (!selectedDeptId) return;
+
+    // We do not lock selection states with password since it is just utility config for Shuffle.
+    if (isOfflineMode) {
+      setMembers((prev) =>
+        prev.map((m) =>
+          m.departmentId === selectedDeptId ? { ...m, selected: select, updatedAt: new Date().toISOString() } : m
+        )
+      );
+      return;
+    }
+
+    try {
+      const batch = writeBatch(db);
+      filteredMembers.forEach((m) => {
+        batch.update(doc(db, 'members', m.id), {
+          selected: select,
+          updatedAt: new Date().toISOString(),
+        });
+      });
+      await withTimeout(batch.commit());
+    } catch (err) {
+      console.warn('Firestore bulk select failed:', err);
+      setIsOfflineMode(true);
+      setMembers((prev) =>
+        prev.map((m) =>
+          m.departmentId === selectedDeptId ? { ...m, selected: select, updatedAt: new Date().toISOString() } : m
+        )
+      );
+    }
+  };
+
+  // Add Member to selected department (Requires password verification check first)
+  const handleAddMember = async (newMeta: Omit<Member, 'id'>) => {
+    if (!selectedDeptId) {
+      alert('등록할 부서를 먼저 신설하거나 선택하세요.');
+      return;
+    }
+
+    const action = async () => {
+      const docId = `custom-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      const isoNow = new Date().toISOString();
+
+      if (isOfflineMode) {
+        const newMember: Member = {
+          ...newMeta,
+          id: docId,
+          departmentId: selectedDeptId,
+          selected: true,
+          createdAt: isoNow,
+          updatedAt: isoNow,
+        };
+        setMembers((prev) => [newMember, ...prev]);
+        setIsAddMemberModalOpen(false);
+        return;
+      }
+
+      try {
+        await withTimeout(setDoc(doc(db, 'members', docId), {
+          departmentId: selectedDeptId,
+          name: newMeta.name,
+          role: newMeta.role || '부서원',
+          photoUrl: newMeta.photoUrl,
+          selected: true,
+          createdAt: isoNow,
+          updatedAt: isoNow,
+        }));
+        setIsAddMemberModalOpen(false);
+      } catch (err) {
+        console.warn('Firestore add member failed:', err);
+        setIsOfflineMode(true);
+        const newMember: Member = {
+          ...newMeta,
+          id: docId,
+          departmentId: selectedDeptId,
+          selected: true,
+          createdAt: isoNow,
+          updatedAt: isoNow,
+        };
+        setMembers((prev) => [newMember, ...prev]);
+        setIsAddMemberModalOpen(false);
+      }
+    };
+
+    checkPasswordAuth(selectedDeptId, action);
+  };
+
+  // Delete Member (Requires password verification check first)
+  const handleDeleteMember = async (id: string) => {
+    if (!selectedDeptId) return;
+
+    const action = async () => {
+      if (isOfflineMode) {
+        setMembers((prev) => prev.filter((m) => m.id !== id));
+        return;
+      }
+
+      try {
+        await withTimeout(deleteDoc(doc(db, 'members', id)));
+      } catch (err) {
+        console.warn('Firestore delete failed:', err);
+        setIsOfflineMode(true);
+        setMembers((prev) => prev.filter((m) => m.id !== id));
+      }
+    };
+
+    checkPasswordAuth(selectedDeptId, action);
+  };
+
+  // Update Member (Requires password verification check first)
+  const handleUpdateMember = async (id: string, updated: Omit<Member, 'id' | 'selected'>) => {
+    if (!selectedDeptId) return;
+
+    const action = async () => {
+      if (isOfflineMode) {
+        setMembers((prev) =>
+          prev.map((m) => (m.id === id ? { ...m, ...updated, updatedAt: new Date().toISOString() } : m))
+        );
+        setIsAddMemberModalOpen(false);
+        return;
+      }
+
+      try {
+        await withTimeout(updateDoc(doc(db, 'members', id), {
+          name: updated.name,
+          role: updated.role || '부서원',
+          photoUrl: updated.photoUrl,
+          updatedAt: new Date().toISOString(),
+        }));
+        setIsAddMemberModalOpen(false);
+      } catch (err) {
+        console.warn('Firestore update failed:', err);
+        setIsOfflineMode(true);
+        setMembers((prev) =>
+          prev.map((m) => (m.id === id ? { ...m, ...updated, updatedAt: new Date().toISOString() } : m))
+        );
+        setIsAddMemberModalOpen(false);
+      }
+    };
+
+    checkPasswordAuth(selectedDeptId, action);
+  };
+
+  // Reset to default roster list in active department (Requires password verification cheek)
+  const handleResetToDefault = async () => {
+    if (!selectedDeptId) return;
+
+    const action = async () => {
+      if (!window.confirm('현재 부서원 명단이 기본 명단으로 덮어써집니다. 계속하시겠습니까?')) {
+        return;
+      }
+
+      // Prepare dev team vs strategy team default mapping
+      const baseMembers = DEFAULT_MEMBERS.filter(m => {
+        const isTech = ['m1', 'm3', 'm5', 'm7', 'm11'].includes(m.id);
+        const isTargetTech = selectedDeptId === 'dept-tech';
+        return isTech === isTargetTech;
+      });
+
+      if (isOfflineMode) {
+        const resetData = baseMembers.map((m, idx) => ({
+          ...m,
+          departmentId: selectedDeptId,
+          selected: true,
+          createdAt: new Date(Date.now() - idx * 1000).toISOString(),
+          updatedAt: new Date().toISOString(),
+        }));
+        setMembers(prev => [
+          ...prev.filter(m => m.departmentId !== selectedDeptId),
+          ...resetData
+        ]);
+        setGroups([]);
+        alert('이 브라우저 로컬 캐시 명단이 성공적으로 초기화되었습니다.');
+        return;
+      }
+
+      try {
+        const batch = writeBatch(db);
+        
+        // Delete only current department members
+        filteredMembers.forEach((m) => {
+          batch.delete(doc(db, 'members', m.id));
+        });
+        
+        // Repopulate with allocated defaults
+        baseMembers.forEach((m, idx) => {
+          const mId = `custom-${selectedDeptId}-${m.id}-${Date.now()}`;
+          const isoNow = new Date(Date.now() - idx * 1000).toISOString();
+          batch.set(doc(db, 'members', mId), {
+            departmentId: selectedDeptId,
+            name: m.name,
+            role: m.role || '부서원',
+            photoUrl: m.photoUrl,
+            selected: true,
+            createdAt: isoNow,
+            updatedAt: isoNow,
+          });
+        });
+
+        await withTimeout(batch.commit());
+        setGroups([]);
+        alert('부서원 명단이 원격 클라우드에 성공적으로 리셋되었습니다!');
+      } catch (err) {
+        console.warn('Firestore reset failed:', err);
+        setIsOfflineMode(true);
+        alert('네트워크 또는 권한 비활성화로 로컬 수준에서만 복구 처리되었습니다.');
+      }
+    };
+
+    checkPasswordAuth(selectedDeptId, action);
+  };
+
+  // Clear all members in active department (Requires password verification cheek)
+  const handleClearAll = async () => {
+    if (!selectedDeptId) return;
+
+    const action = async () => {
+      if (!window.confirm('현재 부서의 모든 부서원이 영구적으로 삭제됩니다. 정말 삭제하시겠습니까?')) {
+        return;
+      }
+
+      if (isOfflineMode) {
+        setMembers((prev) => prev.filter((m) => m.departmentId !== selectedDeptId));
+        setGroups([]);
+        return;
+      }
+
+      try {
+        const batch = writeBatch(db);
+        filteredMembers.forEach((m) => {
+          batch.delete(doc(db, 'members', m.id));
+        });
+        await withTimeout(batch.commit());
+        setGroups([]);
+      } catch (err) {
+        console.warn('Firestore clear all failed:', err);
+        setIsOfflineMode(true);
+        setMembers((prev) => prev.filter((m) => m.departmentId !== selectedDeptId));
+        setGroups([]);
+      }
+    };
+
+    checkPasswordAuth(selectedDeptId, action);
+  };
+
+  // Export current active department list
+  const handleExportBackup = () => {
+    if (filteredMembers.length === 0) {
+      alert('내보낼 부서원 데이터가 없습니다.');
+      return;
+    }
+    try {
+      const dataStr = JSON.stringify(filteredMembers, null, 2);
+      const blob = new Blob([dataStr], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      
+      const deptName = departments.find(d => d.id === selectedDeptId)?.name || 'department';
+      link.download = `teamshuffle_${deptName}_${new Date().toISOString().split('T')[0]}.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      alert('백업 파일 내보내기에 실패했습니다.');
+    }
+  };
+
+  // Import backup list into active selected department (Requires password verification cheek)
+  const handleImportBackup = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !selectedDeptId) return;
+
+    const action = async () => {
+      const reader = new FileReader();
+      reader.onload = async (event) => {
+        try {
+          const result = event.target?.result as string;
+          const parsed = JSON.parse(result);
+          if (Array.isArray(parsed)) {
+            const isValid = parsed.every(p => typeof p === 'object' && p !== null && 'name' in p);
+            if (isValid) {
+              if (isOfflineMode) {
+                const updatedList = parsed.map((m, idx) => ({
+                  ...m,
+                  id: m.id || `custom-${selectedDeptId}-${Date.now()}-${idx}`,
+                  departmentId: selectedDeptId,
+                  createdAt: m.createdAt || new Date().toISOString(),
+                  updatedAt: new Date().toISOString(),
+                }));
+
+                setMembers(prev => [
+                  ...prev.filter(m => m.departmentId !== selectedDeptId),
+                  ...updatedList
+                ]);
+                alert(`성공적으로 ${parsed.length}명의 부서원을 불러왔습니다!`);
+                setGroups([]);
+                return;
+              }
+
+              try {
+                const batch = writeBatch(db);
+                
+                // Delete active
+                filteredMembers.forEach((m) => {
+                  batch.delete(doc(db, 'members', m.id));
+                });
+
+                // Write loaded ones
+                parsed.forEach((m, idx) => {
+                  const mId = m.id || `custom-${selectedDeptId}-${Date.now()}-${idx}-${Math.random().toString(36).substr(2, 5)}`;
+                  const isoNow = m.createdAt || new Date(Date.now() - idx * 1000).toISOString();
+                  batch.set(doc(db, 'members', mId), {
+                    departmentId: selectedDeptId,
+                    name: m.name,
+                    role: m.role || '부서원',
+                    photoUrl: m.photoUrl || 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&h=150&fit=crop&crop=faces&q=80',
+                    selected: m.selected !== false,
+                    createdAt: isoNow,
+                    updatedAt: m.updatedAt || isoNow,
+                  });
+                });
+
+                await withTimeout(batch.commit());
+                alert(`성공적으로 ${parsed.length}명의 부서원을 동기화하였습니다!`);
+                setGroups([]);
+              } catch (err) {
+                console.warn('Firestore import backup failed:', err);
+                setIsOfflineMode(true);
+                alert('네트워크 유실로 임시 로컬 캐시에 백업 복원되었습니다.');
+              }
+            } else {
+              alert('유효한 백업 파일 양식이 아닙니다. 부서원 목록이 정확히 들어있어야 합니다.');
+            }
+          } else {
+            alert('부서원 배열 형식이 아니기 때문에 복원하지 못했습니다.');
+          }
+        } catch (err) {
+          alert('백업 데이터를 불러오는 중 오류가 발생했습니다. 올바른 파일인지 확인해 주세요.');
+        }
+      };
+      reader.readAsText(file);
+      e.target.value = '';
+    };
+
+    checkPasswordAuth(selectedDeptId, action);
+  };
+
+  // Shuffle & Divide algorithm with step animations (Using filteredMembers instead of global members)
+  const triggerShuffle = () => {
+    const activeMembers = filteredMembers.filter((m) => m.selected !== false);
+
+    if (filteredMembers.length === 0) {
+      alert('조를 편성할 부서원이 없습니다. 부서원을 등록하거나 부서를 생성해주세요!');
+      return;
+    }
+    if (activeMembers.length === 0) {
+      alert('추첨(편성)에 참여할 부서원이 선택되지 않았습니다. 명단 목록에서 사진 왼쪽 체크박스를 활성화해주세요!');
+      return;
+    }
+    if (groupCount < 1) {
+      alert('최소 1개 이상의 조를 입력하셔야 합니다.');
+      return;
+    }
+
+    const actualGroupCount = Math.min(groupCount, activeMembers.length);
+
+    setIsShuffling(true);
+    setActiveStep(2);
+    setShufflePhase('preparing');
+    
+    let counter = 0;
+    const intervalTime = 80;
+    const totalFlashingTime = 1600;
+    
+    setTimeout(() => {
+      setShufflePhase('scrambling');
+      
+      const flasher = setInterval(() => {
+        const randomIdx = Math.floor(Math.random() * activeMembers.length);
+        setActiveShuffleMember(activeMembers[randomIdx] as Member);
+        counter += intervalTime;
+        
+        if (counter >= totalFlashingTime) {
+          clearInterval(flasher);
+          setShufflePhase('positioning');
+          
+          setTimeout(() => {
+            const shuffled = shuffleArray<Member>(activeMembers);
+            const generatedGroups: Group[] = Array.from({ length: actualGroupCount }, (_, i) => ({
+              id: `g-${i + 1}`,
+              name: `TEAM ${String(i + 1).padStart(2, '0')}`,
+              members: [],
+            }));
+
+            shuffled.forEach((member, index) => {
+              generatedGroups[index % actualGroupCount].members.push(member);
+            });
+
+            setGroups(generatedGroups);
+            setShufflePhase('completed');
+            
+            setTimeout(() => {
+              setIsShuffling(false);
+              setShufflePhase('idle');
+              setActiveShuffleMember(null);
+            }, 800);
+          }, 600);
+        }
+      }, intervalTime);
+    }, 450);
+  };
+
+  // Rename a dynamic team group
+  const handleRenameGroup = (groupId: string, newName: string) => {
+    setGroups((prev) =>
+      prev.map((g) => (g.id === groupId ? { ...g, name: newName } : g))
     );
   };
 
-  return (
-    <div className="min-h-screen bg-slate-50/70 py-8 px-4 sm:px-6 lg:px-8 font-sans transition-colors duration-300">
-      {/* Dynamic Header */}
-      <div className="max-w-7xl mx-auto space-y-8">
-        <header className="flex flex-col md:flex-row md:items-center md:justify-between border-b border-slate-200/80 pb-6">
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-indigo-600 to-violet-500 flex items-center justify-center shadow-lg shadow-indigo-150 animate-bounce-soft">
-              <Sparkles className="w-6 h-6 text-white" />
-            </div>
-            <div>
-              <h1 id="app-title" className="text-2xl sm:text-3xl font-black bg-gradient-to-r from-indigo-600 via-violet-600 to-indigo-800 bg-clip-text text-transparent tracking-tight">
-                TeamShuffle
-              </h1>
-              <p className="text-xs sm:text-sm text-slate-500 font-medium mt-0.5">
-                대자연의 우주적 에너지를 담아 활기차고 풍성한 조를 정교하게 빌드합니다.
-              </p>
-            </div>
+  const handleCopyResults = () => {
+    if (groups.length === 0) return;
+
+    let resultText = `📋 [조 편성 결과]\n📅 편성 시간: ${new Date().toLocaleString('ko-KR')}\n\n`;
+    groups.forEach((g) => {
+      const memberNames = g.members.map((m) => `${m.name}(${m.role || '팀원'})`).join(', ');
+      resultText += `🔸 ${g.name} (${g.members.length}명):\n   👉 ${memberNames || '배정인원 없음'}\n\n`;
+    });
+    resultText += `🎉 새로 짜인 조원들과 함께 최고의 성과를 내보세요! 🔥`;
+
+    copyToClipboard(resultText, () => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
+  // Render responsive Brand Header & Hamburger Menu
+  const renderNavbar = () => {
+    const isLoggedIn = !!currentUser && !!appUser;
+    const isApproved = appUser?.approved === true;
+    const isAdmin = appUser?.role === 'admin';
+
+    return (
+      <nav id="nav-header" className="h-16 bg-white border-b border-slate-200 px-5 md:px-8 flex items-center justify-between shadow-sm z-50 shrink-0 relative select-none">
+        {/* Brand logo */}
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center shadow-md shadow-indigo-100">
+            <div className="w-4 h-4 border-2 border-white rounded-sm"></div>
           </div>
+          <span className="font-extrabold text-xl tracking-tight text-slate-800 font-display">
+            TeamShuffle
+          </span>
+        </div>
 
-          <div className="mt-4 md:mt-0 flex flex-wrap gap-2">
-            <button
-              id="restore-defaults-btn"
-              onClick={handleRestoreDefaults}
-              className="px-3.5 py-1.5 text-xs text-indigo-600 hover:bg-indigo-50 bg-white font-semibold rounded-lg border border-indigo-200 transition-all flex items-center gap-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-400"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-              예시 리셋
-            </button>
-            <button
-              id="bulk-import-toggle"
-              onClick={() => setIsBulkImportOpen(true)}
-              className="px-3.5 py-1.5 text-xs text-slate-700 bg-white hover:bg-slate-50 font-semibold rounded-lg border border-slate-300 transition-all flex items-center gap-1.5 focus:outline-none focus:ring-2 focus:ring-slate-400"
-            >
-              <Users className="w-3.5 h-3.5 text-slate-500" />
-              일괄 직접 입력
-            </button>
-          </div>
-        </header>
-
-        {/* Dashboard Grid (Two Column) */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-          
-          {/* LEFT PANEL: Member Pool Control Area (Col 5) */}
-          <section className="lg:col-span-4 space-y-6">
-            
-            {/* 1. Add Member Card */}
-            <div id="add-member-card" className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm space-y-4">
-              <h2 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-                <UserPlus className="w-4 h-4 text-indigo-500" />
-                부서원 직접 등록
-              </h2>
-              
-              <form onSubmit={handleAddMember} className="space-y-3.5">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-500 mb-1">이름 *</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="홍길동"
-                    value={newMemberName}
-                    onChange={(e) => setNewMemberName(e.target.value)}
-                    className="w-full px-3 py-2 text-sm bg-slate-50 rounded-xl border border-slate-200 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all placeholder:text-slate-300 text-slate-800"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-500 mb-1">소속 / 부서 / 역할 (선택)</label>
-                  <input
-                    type="text"
-                    placeholder="예: 기획팀, 디자이너"
-                    value={newMemberRole}
-                    onChange={(e) => setNewMemberRole(e.target.value)}
-                    className="w-full px-3 py-2 text-sm bg-slate-50 rounded-xl border border-slate-200 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all placeholder:text-slate-300 text-slate-800"
-                  />
-                </div>
-
-                {/* Avatar/Photo Upload Section */}
-                <div className="space-y-1.5">
-                  <span className="block text-xs font-semibold text-slate-500">프로필 사진 (선택)</span>
-                  <div className="flex items-center gap-3">
-                    <button
-                      type="button"
-                      id="upload-photo-btn"
-                      onClick={() => triggerFileSelect(false)}
-                      className="h-14 w-14 rounded-2xl bg-slate-50 hover:bg-slate-100/70 border-2 border-dashed border-slate-300 flex flex-col items-center justify-center text-slate-400 group transition-all"
-                    >
-                      {newMemberPhoto ? (
-                        <img 
-                          src={newMemberPhoto} 
-                          alt="preview" 
-                          className="w-full h-full object-cover rounded-2xl" 
-                        />
-                      ) : (
-                        <>
-                          <Upload className="w-4 h-4 group-hover:text-indigo-500 transition-colors" />
-                          <span className="text-[9px] mt-0.5 font-bold">등록</span>
-                        </>
-                      )}
-                    </button>
-                    
-                    <input
-                      type="file"
-                      ref={fileInputRef}
-                      accept="image/*"
-                      onChange={(e) => handlePhotoUpload(e, false)}
-                      className="hidden"
-                    />
-
-                    <div className="text-xs text-slate-500">
-                      {newMemberPhoto ? (
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-emerald-600 font-bold">✓ 사진 준비 완료</span>
-                          <button 
-                            type="button"
-                            onClick={() => setNewMemberPhoto(undefined)}
-                            className="text-slate-400 hover:text-red-500"
-                          >
-                            <X className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      ) : (
-                        "사진 미지정 시 이니셜이 포함된 멋진 랜덤 파스텔 프로필이 자동 지정됩니다."
-                      )}
-                    </div>
-                  </div>
-                </div>
-
+        {/* --- DESKTOP VIEW NAV ITEMS (md and up) --- */}
+        <div className="hidden md:flex items-center gap-4 select-none">
+          {isLoggedIn && isApproved && (
+            <div className="flex items-center gap-2 select-none md:gap-3">
+              {showInstallBadge && (
                 <button
-                  type="submit"
-                  id="add-member-btn"
-                  className="w-full h-11 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold rounded-xl transition-all shadow-md shadow-indigo-100 flex items-center justify-center gap-1.5"
+                  onClick={handleInstallClick}
+                  className="px-3 py-1.5 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white rounded-xl text-[11px] font-bold flex items-center gap-1.5 transition-all shadow-sm hover:shadow-indigo-100 cursor-pointer hover:scale-[1.03]"
+                  title="TeamShuffle 스마트 앱 다운로드 및 홈 화면 추가"
                 >
-                  <Plus className="w-4 h-4" />
-                  부서원 등록하기
+                  <Smartphone className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
+                  <span>앱 설치</span>
                 </button>
-              </form>
+              )}
+
+              <button
+                onClick={() => setActiveStep(1)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  activeStep === 1
+                    ? 'bg-indigo-50 text-indigo-600'
+                    : 'text-slate-400 hover:text-slate-600'
+                }`}
+              >
+                등록
+              </button>
+              <span className="text-slate-300 text-xs">➔</span>
+              <button
+                onClick={() => setActiveStep(2)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  activeStep === 2
+                    ? 'bg-indigo-50 text-indigo-600'
+                    : 'text-slate-400 hover:text-slate-600'
+                }`}
+              >
+                추첨
+              </button>
+
+              {isAdmin && (
+                <>
+                  <span className="text-slate-300 text-xs">➔</span>
+                  <button
+                    onClick={() => setActiveStep(3)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                      activeStep === 3
+                        ? 'bg-indigo-50 text-indigo-600'
+                        : 'text-slate-400 hover:text-slate-600'
+                    }`}
+                  >
+                    승인 관리
+                  </button>
+                </>
+              )}
             </div>
+          )}
 
-            {/* Editing modal helper inline */}
-            {editingMember && (
-              <div className="bg-amber-50/70 border border-amber-200 rounded-2xl p-5 space-y-4 animate-fade-in">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-bold text-amber-900 flex items-center gap-1.5">
-                    <Edit3 className="w-4 h-4" />
-                    부서원 정보 편집
-                  </h3>
-                  <button onClick={() => setEditingMember(null)} className="text-slate-400 hover:text-slate-600">
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-                
-                <div className="space-y-3">
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-500">이름</label>
-                    <input
-                      type="text"
-                      className="w-full px-3 py-1.5 text-sm bg-white rounded-lg border border-slate-200 focus:outline-none focus:ring-1 focus:ring-amber-500 text-slate-800"
-                      value={editingMember.name}
-                      onChange={(e) => setEditingMember({ ...editingMember, name: e.target.value })}
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-500">부서 / 역할</label>
-                    <input
-                      type="text"
-                      className="w-full px-3 py-1.5 text-sm bg-white rounded-lg border border-slate-200 focus:outline-none focus:ring-1 focus:ring-amber-500 text-slate-800"
-                      value={editingMember.role}
-                      onChange={(e) => setEditingMember({ ...editingMember, role: e.target.value })}
-                    />
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <button
-                      type="button"
-                      onClick={() => triggerFileSelect(true)}
-                      className="h-10 w-10 bg-white border border-slate-200 rounded-lg flex items-center justify-center text-slate-500 hover:bg-slate-50"
-                    >
-                      {editingMember.photoUrl ? (
-                        <img src={editingMember.photoUrl} alt="edit" className="w-full h-full object-cover rounded-lg" />
-                      ) : (
-                        <ImageIcon className="w-4 h-4" />
-                      )}
-                    </button>
-                    <input
-                      type="file"
-                      ref={editFileInputRef}
-                      accept="image/*"
-                      onChange={(e) => handlePhotoUpload(e, true)}
-                      className="hidden"
-                    />
-                    <span className="text-xs text-slate-500">프로필 사진을 업데이트할 수 있습니다.</span>
-                  </div>
-
-                  <div className="flex gap-2">
-                    <button
-                      onClick={handleSaveEdit}
-                      className="flex-1 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs rounded-lg transition-colors"
-                    >
-                      변경 내용 저장
-                    </button>
-                    <button
-                      onClick={() => setEditingMember(null)}
-                      className="px-3 py-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs rounded-lg transition-colors"
-                    >
-                      취소
-                    </button>
-                  </div>
-                </div>
+          {/* User profile action state (or compact login trigger) on desktop */}
+          {isLoggedIn ? (
+            <div className="flex items-center gap-2.5 border border-slate-200 pl-2 pr-3 py-1 rounded-full bg-slate-50 shadow-2xs select-none">
+              <img
+                src={appUser.photoUrl || 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=100&auto=format&fit=crop&q=80'}
+                alt={appUser.displayName}
+                referrerPolicy="no-referrer"
+                className="w-7 h-7 rounded-full border border-slate-300"
+              />
+              <div className="hidden sm:flex flex-col text-left">
+                <span className="text-[11px] font-extrabold text-slate-700 leading-none">
+                  {appUser.displayName}
+                </span>
+                <span className="text-[9px] font-bold text-indigo-600 mt-0.5 leading-none">
+                  {isAdmin ? '최고관리자' : isApproved ? '승인완료' : '승인대기'}
+                </span>
               </div>
-            )}
-
-            {/* 2. Parameters Configuration */}
-            <div id="settings-card" className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm space-y-4">
-              <h2 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-                <Settings className="w-4 h-4 text-emerald-500" />
-                조 편성 분할 설정
-              </h2>
-
-              <div className="space-y-4">
-                {/* Target Split Type */}
-                <div className="grid grid-cols-2 gap-2 bg-slate-50 p-1.5 rounded-xl">
-                  <button
-                    type="button"
-                    onClick={() => { setTargetType('count'); setTargetValue(3); }}
-                    className={`py-2 text-xs font-bold rounded-lg transition-all ${targetType === 'count' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
-                  >
-                    총 생성할 조의 개수
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { setTargetType('size'); setTargetValue(4); }}
-                    className={`py-2 text-xs font-bold rounded-lg transition-all ${targetType === 'size' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
-                  >
-                    조당 가득 찰 멤버수
-                  </button>
-                </div>
-
-                {/* Target Number Config */}
-                <div>
-                  <div className="flex justify-between items-center mb-1">
-                    <label className="text-xs font-semibold text-slate-500">
-                      {targetType === 'count' ? '원하는 총 조의 개수(팀)' : '조 한 팀당 최대 정원(명)'}
-                    </label>
-                    <span className="text-sm font-black text-indigo-600">{targetValue} {targetType === 'count' ? '개 조' : '명'}</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="2"
-                    max={targetType === 'count' ? Math.max(2, members.length) : Math.max(2, members.length)}
-                    value={targetValue}
-                    onChange={(e) => setTargetValue(parseInt(e.target.value))}
-                    className="w-full h-1.5 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-indigo-600"
-                  />
-                  <p className="text-[11px] text-slate-400 mt-1">
-                    {targetType === 'count' 
-                      ? `총 ${members.length}명의 부서원을 ${targetValue}개 조로 분할 구성합니다.`
-                      : `한 팀의 최대 정원을 ${targetValue}명으로 제한하여 균등 편향 분리합니다.`
-                    }
-                  </p>
-                </div>
-
-                {/* Group Names Theme Collection */}
-                <div>
-                  <label className="block text-xs font-semibold text-slate-500 mb-1">조 이름 테마</label>
-                  <select
-                    value={selectedTheme}
-                    onChange={(e) => setSelectedTheme(e.target.value)}
-                    className="w-full px-3 py-2 text-xs bg-slate-50 rounded-xl border border-slate-200 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all text-slate-700"
-                  >
-                    {GROUP_THEMES.map(theme => (
-                      <option key={theme.id} value={theme.id}>{theme.name}</option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Same Team Balance Toggle */}
-                <div className="flex items-start gap-2.5 pt-1">
-                  <input
-                    type="checkbox"
-                    id="avoidSameRoleCheckbox"
-                    checked={avoidSameRole}
-                    onChange={(e) => setAvoidSameRole(e.target.checked)}
-                    className="mt-0.5 rounded text-indigo-600 focus:ring-indigo-400 h-4.5 w-4.5 border-slate-300"
-                  />
-                  <div className="text-xs">
-                    <label htmlFor="avoidSameRoleCheckbox" className="font-bold text-slate-700 cursor-pointer">
-                      부서/역할 쏠림 최소화 균형 배분
-                    </label>
-                    <p className="text-slate-400 mt-0.5 font-medium leading-relaxed">
-                      동일한 소속이나 부서의 사람들이 같은 조에 몰리지 않도록 최대한 다른 조로 골고루 균형 편향 분배합니다.
-                    </p>
-                  </div>
-                </div>
-              </div>
+              <button
+                onClick={handleLogoutAction}
+                className="hover:text-rose-600 font-extrabold text-[10px] text-slate-400 shrink-0 transition-colors ml-1 cursor-pointer pl-1.5 border-l border-slate-200"
+              >
+                로그아웃
+              </button>
             </div>
+          ) : (
+            <button
+              onClick={handleGoogleLogin}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-3xs cursor-pointer transition-all active:scale-[0.98]"
+            >
+              로그인
+            </button>
+          )}
+        </div>
 
-            {/* 3. History Panel */}
-            {history.length > 0 && (
-              <div id="history-panel" className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm space-y-3">
-                <h2 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-                  <History className="w-4 h-4 text-violet-500" />
-                  최근 조 편성 이력 (최대 15개)
-                </h2>
-                
-                <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
-                  {history.map((hist) => (
-                    <div
-                      key={hist.id}
-                      onClick={() => handleLoadHistory(hist)}
-                      className="p-2.5 rounded-xl border border-slate-100 hover:border-indigo-100 bg-slate-50/50 hover:bg-slate-50 cursor-pointer transition-all flex items-center justify-between group"
-                    >
-                      <div className="truncate pr-2">
-                        <div className="text-xs font-black text-slate-700 flex items-center gap-1.5">
-                          <span>{hist.teams.length}개 조 편성 완료</span>
-                          <span className="text-[10px] font-medium text-slate-400 bg-slate-200/50 px-1.5 py-0.5 rounded">
-                            {hist.themeName.split(' ')[0]}
-                          </span>
-                        </div>
-                        <div className="text-[10px] text-slate-400 mt-0.5">{hist.date}</div>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <span className="text-[10px] text-indigo-600 font-bold opacity-0 group-hover:opacity-100 transition-opacity">불러오기</span>
-                        <button
-                          onClick={(e) => handleDeleteHistory(hist.id, e)}
-                          className="p-1 text-slate-300 hover:text-red-500 rounded hover:bg-slate-100"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
+        {/* --- MOBILE VIEW HAMBURGER TRIGGER --- */}
+        <div className="flex md:hidden items-center gap-2">
+          {showInstallBadge && !isLoggedIn && (
+            <button
+              onClick={handleInstallClick}
+              className="p-1 px-2.5 py-1 text-slate-500 hover:text-indigo-600 transition-colors text-[10px] font-bold bg-slate-50 border border-slate-200/60 rounded-lg flex items-center gap-1"
+              title="앱 설치"
+            >
+              <Smartphone className="w-3.5 h-3.5 text-emerald-500" />
+              <span>설치</span>
+            </button>
+          )}
+          <button
+            onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+            className="p-2 -mr-1 bg-slate-50 hover:bg-slate-100 rounded-xl text-slate-600 transition-colors cursor-pointer select-none border border-slate-200/50"
+            aria-label="모바일 메뉴"
+          >
+            {isMobileMenuOpen ? (
+              <X className="w-5 h-5 shrink-0 text-slate-600" />
+            ) : (
+              <Menu className="w-5 h-5 shrink-0 text-slate-600" />
             )}
-          </section>
+          </button>
+        </div>
 
-          {/* RIGHT PANEL: Member Pool State AND Results Shuffling Arena (Col 7) */}
-          <main className="lg:col-span-8 flex flex-col gap-8">
-            
-            {/* 1. All Current Members Board */}
-            <div id="members-list-container" className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm space-y-4">
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <span className="p-1.5 rounded-lg bg-indigo-50 text-indigo-600">
-                    <Users className="w-4 h-4" />
-                  </span>
-                  <h2 className="text-base font-black text-slate-800">
-                    현재 대기 부서원 목록
-                  </h2>
-                  <span className="bg-indigo-100 text-indigo-700 text-xs font-bold px-2 py-0.5 rounded-full">
-                    {members.length}명
-                  </span>
-                </div>
-                
-                {members.length > 0 && (
-                  <button
-                    id="clear-all-btn"
-                    onClick={handleClearAllMembers}
-                    className="text-xs text-red-500 hover:text-red-600 hover:underline flex items-center gap-1 self-end sm:self-auto"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    전체 삭제
-                  </button>
-                )}
-              </div>
-
-              {members.length === 0 ? (
-                <div className="border-2 border-dashed border-slate-100 rounded-2xl p-10 text-center space-y-3">
-                  <div className="bg-slate-50 w-12 h-12 rounded-full flex items-center justify-center mx-auto text-slate-400">
-                    <User className="w-6 h-6" />
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-bold text-slate-700">등록된 부서원이 없습니다</h3>
-                    <p className="text-xs text-slate-400 max-w-sm mx-auto mt-1">
-                      좌측의 개별 부서원 등록 폼 또는 상단의 대용량 [일괄 직접 입력] 버튼이나 우측의 [예시 리셋] 버튼을 통해 예시 부서원들을 빠르게 로드해보세요!
-                    </p>
+        {/* --- MOBILE DROPDOWN HAMBURGER DRAWER SHEET PANEL --- */}
+        <AnimatePresence>
+          {isMobileMenuOpen && (
+            <motion.div
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.15 }}
+              className="absolute top-16 left-0 right-0 bg-white border-b border-slate-200/95 shadow-xl z-50 flex flex-col p-5 md:hidden gap-4"
+            >
+              {/* Profile Card Container inside Hamburger menu */}
+              {isLoggedIn ? (
+                <div className="flex items-center gap-3 p-3 bg-slate-50 border border-slate-200/85 rounded-2xl">
+                  <img
+                    src={appUser.photoUrl || 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=100&auto=format&fit=crop&q=80'}
+                    alt={appUser.displayName}
+                    referrerPolicy="no-referrer"
+                    className="w-10 h-10 rounded-full border border-slate-300 shrink-0"
+                  />
+                  <div className="flex-1 text-left min-w-0">
+                    <span className="text-xs font-extrabold text-slate-800 block truncate leading-tight">
+                      {appUser.displayName}
+                    </span>
+                    <span className="text-[10px] text-slate-400 font-bold block truncate mt-0.5 leading-none">
+                      {currentUser?.email || appUser?.email}
+                    </span>
+                    <span className="inline-flex mt-1.5 text-[8.5px] font-extrabold text-white bg-indigo-600 px-1.5 py-0.5 rounded-md leading-none tracking-wider select-none uppercase">
+                      {isAdmin ? '최고관리자 👑' : isApproved ? '승인완료 ✅' : '가입승인 대기 🔒'}
+                    </span>
                   </div>
                 </div>
               ) : (
-                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 max-h-80 overflow-y-auto pr-1">
-                  {members.map((member, index) => {
-                    const isFlipped = activeFlippedCard === index;
-                    return (
-                      <div
-                        key={member.id}
-                        onClick={() => setEditingMember(member)}
-                        className={`group relative p-3 rounded-xl border transition-all duration-200 cursor-pointer text-left flex items-center gap-2.5 ${
-                          isFlipped 
-                            ? 'bg-blue-600 text-white border-blue-600 pulse-glow scale-105' 
-                            : 'bg-white text-slate-800 border-slate-200/70 hover:border-indigo-200 hover:shadow-sm'
+                <div className="p-3.5 bg-slate-50 border border-dashed border-slate-200/80 rounded-2xl text-center">
+                  <p className="text-[11px] font-extrabold text-slate-500 leading-relaxed max-w-xs mx-auto text-center font-sans">
+                    🔒 공정 투명한 부서원 셔플 추첨기 사용을 위해 간편 구글 로그인을 완성해 주세요!
+                  </p>
+                </div>
+              )}
+
+              {/* Navigation Items in mobile layout */}
+              <div className="flex flex-col gap-1.5 text-left">
+                {isLoggedIn && isApproved ? (
+                  <>
+                    <button
+                      onClick={() => {
+                        setActiveStep(1);
+                        setIsMobileMenuOpen(false);
+                      }}
+                      className={`w-full flex items-center justify-between p-3 rounded-xl text-xs font-extrabold transition-all text-left ${
+                        activeStep === 1
+                          ? 'bg-indigo-50/80 text-indigo-600 border-l-4 border-indigo-600 pl-2.5'
+                          : 'text-slate-600 hover:bg-slate-50'
+                      }`}
+                    >
+                      <span className="flex items-center gap-2 font-bold font-sans">
+                        <Users className="w-4 h-4 shrink-0 text-slate-400" />
+                        <span>명단 및 부서 등록 관리</span>
+                      </span>
+                      <span className="text-[9px] font-bold text-slate-300">이동 ➔</span>
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        setActiveStep(2);
+                        setIsMobileMenuOpen(false);
+                      }}
+                      className={`w-full flex items-center justify-between p-3 rounded-xl text-xs font-extrabold transition-all text-left ${
+                        activeStep === 2
+                          ? 'bg-indigo-50/80 text-indigo-600 border-l-4 border-indigo-600 pl-2.5'
+                          : 'text-slate-600 hover:bg-slate-50'
+                      }`}
+                    >
+                      <span className="flex items-center gap-2 font-bold font-sans">
+                        <Shuffle className="w-4 h-4 shrink-0 text-slate-400" />
+                        <span>셔플 무작위 조 추첨</span>
+                      </span>
+                      <span className="text-[9px] font-bold text-slate-300">이동 ➔</span>
+                    </button>
+
+                    {isAdmin && (
+                      <button
+                        onClick={() => {
+                          setActiveStep(3);
+                          setIsMobileMenuOpen(false);
+                        }}
+                        className={`w-full flex items-center justify-between p-3 rounded-xl text-xs font-extrabold transition-all text-left ${
+                          activeStep === 3
+                            ? 'bg-indigo-50/80 text-indigo-600 border-l-4 border-indigo-600 pl-2.5'
+                            : 'text-slate-600 hover:bg-slate-50'
                         }`}
                       >
-                        {renderAvatar(member, "w-10 h-10 text-sm flex-shrink-0")}
-                        <div className="min-w-0 pr-4">
-                          <p className={`text-xs font-black truncate ${isFlipped ? 'text-white' : 'text-slate-700'}`}>
-                            {member.name}
-                          </p>
-                          <p className={`text-[10px] truncate ${isFlipped ? 'text-white/80' : 'text-slate-400 font-bold'}`}>
-                            {member.role}
-                          </p>
+                        <span className="flex items-center gap-2 text-indigo-650 font-bold font-sans">
+                          <Crown className="w-4 h-4 text-indigo-500 shrink-0" />
+                          <span>가입 유저 승인 및 권한 관리</span>
+                        </span>
+                        <span className="text-[9px] font-bold text-indigo-300">관리자 ➔</span>
+                      </button>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <div className="p-3 text-[11px] text-slate-400 font-bold flex items-center justify-between bg-slate-50/50 rounded-xl select-none border border-dashed border-slate-200">
+                      <span className="flex items-center gap-2 font-bold">
+                        <Users className="w-3.5 h-3.5 text-slate-300" />
+                        <span>명단 및 부서 등록</span>
+                      </span>
+                      <span className="text-[9px] text-slate-300">로그인 필요 🔒</span>
+                    </div>
+                    <div className="p-3 text-[11px] text-slate-400 font-bold flex items-center justify-between bg-slate-50/50 rounded-xl select-none border border-dashed border-slate-200">
+                      <span className="flex items-center gap-2 font-bold font-sans">
+                        <Shuffle className="w-3.5 h-3.5 text-slate-300" />
+                        <span>셔플 무작위 조 추첨</span>
+                      </span>
+                      <span className="text-[9px] text-slate-300">로그인 필요 🔒</span>
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {/* Action buttons and controls at bottom of mobile menu */}
+              <div className="flex flex-col gap-2 pt-3 border-t border-slate-100">
+                {showInstallBadge && (
+                  <button
+                    onClick={() => {
+                      handleInstallClick();
+                      setIsMobileMenuOpen(false);
+                    }}
+                    className="w-full flex items-center justify-center gap-2 py-3 bg-slate-50 border border-slate-200 hover:bg-slate-100 text-slate-700 text-xs font-extrabold rounded-xl transition-all cursor-pointer shadow-3xs"
+                  >
+                    <Smartphone className="w-4 h-4 text-emerald-500 shrink-0 animate-bounce" />
+                    <span>홈 화면에 스마트 앱 단축 아이콘 설치</span>
+                  </button>
+                )}
+
+                {isLoggedIn ? (
+                  <button
+                    onClick={() => {
+                      handleLogoutAction();
+                      setIsMobileMenuOpen(false);
+                    }}
+                    className="w-full py-3 bg-rose-50 hover:bg-rose-100 text-rose-600 text-xs font-extrabold rounded-xl border border-rose-100 transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-3xs font-sans"
+                  >
+                    <span>구글 계정 안전 로그아웃</span>
+                  </button>
+                ) : (
+                  <div className="flex flex-col gap-2.5">
+                    <button
+                      onClick={() => {
+                        handleGoogleLogin();
+                        setIsMobileMenuOpen(false);
+                      }}
+                      className="w-full py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99] font-sans"
+                    >
+                      {/* Integrated Google SVG Icon */}
+                      <svg className="w-4 h-4 shrink-0 fill-current" viewBox="0 0 24 24">
+                        <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#FFFFFF"/>
+                      </svg>
+                      <span>Google 계정으로 계속하기 (로그인)</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        handleGoogleRedirectLogin();
+                        setIsMobileMenuOpen(false);
+                      }}
+                      className="w-full py-2.5 text-indigo-600 hover:bg-indigo-50 text-[10.5px] font-extrabold rounded-xl transition-all flex items-center justify-center gap-1.5 border border-indigo-150 cursor-pointer font-sans"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5 shrink-0 text-indigo-500" />
+                      <span>팝업 연결 이슈 시 페이지 이동 로그인</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </nav>
+    );
+  };
+
+  // 1. Loading screen
+  if (isAuthLoading) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center font-sans text-slate-900 select-none p-4">
+        <div className="w-full max-w-sm flex flex-col items-center gap-6 text-center">
+          <div className="flex flex-col items-center gap-4 animate-pulse">
+            <div className="w-12 h-12 bg-indigo-600 rounded-2xl flex items-center justify-center shadow-lg shadow-indigo-150">
+              <div className="w-6 h-6 border-3 border-white rounded-md"></div>
+            </div>
+            <h1 className="text-xl font-black tracking-tight text-slate-800 font-display">TeamShuffle</h1>
+            <p className="text-xs text-slate-400 font-bold tracking-wider uppercase">보안 연결 및 사용자 정보 구성 중...</p>
+          </div>
+
+          {showLoadingWarning && (
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="w-full bg-white border border-rose-100 rounded-2xl p-5 shadow-lg flex flex-col gap-4 mt-2"
+            >
+              <div className="flex items-start gap-2.5 text-left">
+                <span className="text-lg text-rose-500 mt-0.5">⚠️</span>
+                <div className="flex-1">
+                  <h3 className="text-xs font-bold text-slate-800">연결 지연 안내</h3>
+                  <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
+                    Firebase와의 보안 연결이 지연되고 있습니다. 
+                    인터넷 상태가 느리거나, 파티션 브라우저 보안 이슈일 수 있습니다.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-2 w-full">
+                <button
+                  id="loading-force-offline-btn"
+                  onClick={enableOfflineMode}
+                  className="w-full py-2 px-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl transition duration-150 shadow-sm"
+                >
+                  오프라인 모드로 우선 시작하기 (비로그인)
+                </button>
+                
+                <div className="grid grid-cols-2 gap-1.5">
+                  <button
+                    id="loading-clear-config-btn"
+                    onClick={() => {
+                      safeStorage.removeItem('CUSTOM_FIREBASE_CONFIG');
+                      safeStorage.removeItem('force_offline_mode');
+                      window.location.reload();
+                    }}
+                    className="py-1.5 px-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-[10px] rounded-lg transition duration-150"
+                  >
+                    설정 초기화 후 새로고침
+                  </button>
+                  <button
+                    id="loading-logout-btn"
+                    onClick={async () => {
+                      try {
+                        await logout();
+                      } catch(_) {}
+                      window.location.reload();
+                    }}
+                    className="py-1.5 px-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-[10px] rounded-lg transition duration-150"
+                  >
+                    계정 세션 초기화
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // 2. Google Login Landing Screen
+  if (!currentUser || !appUser) {
+    const isInIframe = window.self !== window.top;
+
+    return (
+      <div className="min-h-screen bg-slate-50 flex flex-col font-sans text-slate-900 select-none overflow-y-auto">
+        {/* Render responsive Brand Header & Hamburger Menu */}
+        {renderNavbar()}
+
+        {/* Center content */}
+        <div className="flex-1 flex items-center justify-center p-4 relative overflow-hidden">
+          {/* Ambient background decoration */}
+          <div className="absolute top-[-10%] right-[-10%] w-[45%] h-[45%] bg-indigo-50/50 rounded-full blur-3xl -z-10" />
+          <div className="absolute bottom-[-10%] left-[-10%] w-[45%] h-[45%] bg-violet-50/40 rounded-full blur-3xl -z-10" />
+
+          <div className="w-full max-w-md bg-white border border-slate-200/90 rounded-3xl p-6 sm:p-8 shadow-2xl flex flex-col items-center text-center relative gap-5 my-8">
+          <div className="flex flex-col items-center">
+            <div className="w-12 h-12 bg-indigo-600 rounded-2xl flex items-center justify-center shadow-lg shadow-indigo-150 mb-4">
+              <div className="w-6 h-6 border-3 border-white rounded-md"></div>
+            </div>
+
+            <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight text-slate-800 font-display">
+              TeamShuffle 조 편성 엔진
+            </h1>
+            <p className="text-xs text-slate-500 mt-2 leading-relaxed max-w-xs">
+              공정하고 투명한 부서원 셔플 조 추첨 서비스입니다.<br/>
+              구글 계정으로 로그인하여 안전하게 부서 명단을 관리해보세요.
+            </p>
+          </div>
+
+          <div className="w-full h-[1px] bg-slate-100 my-1" />
+
+          {/* Iframe Warnings and Actions */}
+          {isInIframe && (
+            <div id="iframe-restriction-alert" className="w-full bg-indigo-50/70 border border-indigo-100 rounded-2xl p-4 text-left flex flex-col gap-2.5">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <span className="text-[11px] font-extrabold text-indigo-950 leading-tight block">
+                    구글 크롬/사파리 iframe 보안 이슈 안내
+                  </span>
+                  <span className="text-[10px] text-indigo-800 mt-1 block leading-normal font-semibold">
+                    브라우저의 "3자 쿠키 및 로컬 저장소 제한 정책"으로 인해 AI Studio 내부화면(iframe)에서는 구글 로그인창이 차단되거나 깜빡이고 동작하지 않을 수 있습니다. 
+                  </span>
+                </div>
+              </div>
+              
+              {/* Native user gesture anchor link to open in new tab */}
+              <a
+                href={window.location.href}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="w-full flex items-center justify-center gap-1.5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-extrabold transition-all shadow-sm hover:scale-[1.01] active:scale-[0.99]"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                <span>독립된 새 창(새 탭)에서 실행하기</span>
+              </a>
+            </div>
+          )}
+
+          {/* Error messages if any */}
+          {authError && (
+            <div id="auth-error-alert" className="w-full bg-rose-50 border border-rose-100 rounded-2xl p-4 text-left flex flex-col gap-3">
+              <div className="flex gap-3">
+                <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5 animate-pulse" />
+                <div className="flex-1">
+                  <span className="text-xs font-extrabold text-rose-900 leading-tight block">
+                    데이터베이스 오류 발생
+                  </span>
+                  <span className="text-[11px] text-rose-700 mt-1 block leading-relaxed break-all font-semibold">
+                    {authError}
+                  </span>
+                </div>
+              </div>
+
+              {authError.includes('권한') && (
+                <div className="mt-2 bg-white/60 rounded-xl p-3 border border-rose-200">
+                  <span className="text-[10px] font-bold text-rose-900 block mb-2">💡 Firebase Console의 [Firestore Database] &gt; [Rules]에 다음 코드를 복사해서 붙여넣으세요:</span>
+                  <div className="relative group">
+                    <pre className="text-[9px] text-slate-800 bg-white p-2.5 rounded-lg overflow-x-auto border border-slate-200 max-h-32">
+{`rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if true; // ⚠️ 개발용 임시 설정
+    }
+  }
+}`}
+                    </pre>
+                    <button 
+                      onClick={() => {
+                        const rulesText = "rules_version = '2';\nservice cloud.firestore {\n  match /databases/{database}/documents {\n    match /{document=**} {\n      allow read, write: if true;\n    }\n  }\n}";
+                        copyToClipboard(rulesText, () => {
+                          setRulesCopied(true);
+                          setTimeout(() => setRulesCopied(false), 2000);
+                        });
+                      }}
+                      className={`absolute top-1.5 right-1.5 px-2.5 py-1.5 rounded-lg text-[10px] font-black border shadow-sm transition-all flex items-center gap-1 cursor-pointer ${
+                        rulesCopied 
+                          ? "bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-700" 
+                          : "bg-slate-800 hover:bg-slate-900 text-white border-slate-900"
+                      }`}
+                    >
+                      {rulesCopied ? "✓ 복사 완료!" : "📋 규칙 복사"}
+                    </button>
+                  </div>
+                  <span className="text-[9px] text-rose-600 mt-2 block font-medium">* 위 코드는 빠른 테스트를 위한 전체 허용 규칙입니다. 추후 프로덕션에서는 보안을 강화해야 합니다.</span>
+                </div>
+              )}
+
+              {/* Offer offline transition instantly if any Firestore/Auth error occurs */}
+              <div className="flex flex-col gap-2 border-t border-rose-200/50 pt-2.5 mt-1">
+                <button
+                  type="button"
+                  onClick={enableOfflineMode}
+                  className="w-full py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-[10px] font-extrabold transition-all hover:scale-[1.01] text-center cursor-pointer"
+                >
+                  오프라인 캐시 전용 모드로 시작하기 (오류 우회 / 비로그인 기능)
+                </button>
+                
+                <button
+                  type="button"
+                  onClick={() => {
+                    safeStorage.removeItem('CUSTOM_FIREBASE_CONFIG');
+                    safeStorage.removeItem('force_offline_mode');
+                    window.location.reload();
+                  }}
+                  className="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-750 border border-slate-200 rounded-xl text-[10px] font-extrabold transition-all text-center cursor-pointer"
+                >
+                  커스텀 설정 초기화하고 기본 데모 DB로 시도
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* User profile is loading transition support state */}
+          {currentUser && !appUser && !authError && (
+            <div className="w-full bg-amber-50 border border-amber-150 rounded-2xl p-4 text-left flex flex-col gap-2.5">
+              <div className="flex items-start gap-2">
+                <RefreshCw className="w-4 h-4 text-amber-600 shrink-0 mt-0.5 animate-spin" />
+                <div className="flex-1">
+                  <span className="text-[11px] font-extrabold text-amber-950 leading-tight block">
+                    구글 로그인 성공. 프로필 로딩 중...
+                  </span>
+                  <span className="text-[10px] text-amber-800 mt-1 block leading-normal font-semibold">
+                    로그인은 완료되었으나, 개인 Firebase Database(Firestore)로부터 사용자의 회원 프로필 정보를 조회/작성하는 데 시간이 걸리고 있습니다. 
+                    계속 로딩이 멈춰 있다면 아래 버튼을 사용하여 오프라인 모드로 우선 실행할 수 있습니다.
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={enableOfflineMode}
+                className="w-full py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-[10px] font-extrabold transition-all hover:scale-[1.01] text-center cursor-pointer"
+              >
+                오프라인 강제 모드로 구동하기
+              </button>
+            </div>
+          )}
+
+          {/* Standard Login trigger button (Always shown for high visibility across all environments) */}
+          <div className="w-full flex flex-col gap-3">
+            <button
+              onClick={handleGoogleLogin}
+              className="w-full flex items-center justify-center gap-3 px-5 py-3.5 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-extrabold rounded-2xl transition-all cursor-pointer shadow-xs hover:border-slate-300 active:scale-[0.99] hover:scale-[1.01]"
+            >
+              {/* Custom Google inline icon */}
+              <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none">
+                <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+                <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+                <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l3.66-2.85z" fill="#FBBC05"/>
+                <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.85c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+              </svg>
+              <span className="text-sm text-slate-700 font-bold">Google 계정으로 계속하기</span>
+            </button>
+
+            {/* Redirect Login Flow as a foolproof fallback */}
+            <div className="text-center mt-0.5">
+              <span className="text-[10px] text-slate-400 font-semibold block mb-1">
+                팝업이 차단되거나 로그인창이 보이지 않나요?
+              </span>
+              <button
+                onClick={handleGoogleRedirectLogin}
+                className="text-indigo-600 hover:text-indigo-700 hover:underline text-[11px] font-extrabold cursor-pointer inline-flex items-center gap-1.5"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>페이지 이동(Redirect) 방식으로 로그인하기</span>
+              </button>
+            </div>
+          </div>
+
+          <p className="text-[10px] text-slate-400 font-bold leading-normal">
+            최초 로그인 시 승인 대기로 등록되며,<br/>
+            최고 관리자 승인 후 즉시 사용 가능합니다.
+          </p>
+        </div>
+      </div>
+    </div>
+    );
+  }
+
+  // 3. User is not approved yet -> show Pending approval Screen
+  if (appUser.approved !== true) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex flex-col font-sans text-slate-900 select-none overflow-y-auto">
+        {/* Render responsive Brand Header & Hamburger Menu */}
+        {renderNavbar()}
+
+        {/* Center content */}
+        <div className="flex-1 flex items-center justify-center p-4 relative overflow-hidden">
+          {/* Ambient background decoration */}
+          <div className="absolute top-[-10%] right-[-10%] w-[45%] h-[45%] bg-amber-50/40 rounded-full blur-3xl -z-10" />
+          <div className="absolute bottom-[-10%] left-[-10%] w-[45%] h-[45%] bg-indigo-50/30 rounded-full blur-3xl -z-10" />
+
+          <div className="w-full max-w-md bg-white border border-slate-200/90 rounded-3xl p-6 sm:p-8 shadow-2xl flex flex-col items-center text-center relative my-8">
+          {/* Pulsing Lock Icon */}
+          <div className="w-14 h-14 bg-amber-50 border border-amber-100 rounded-full flex items-center justify-center mb-5 animate-bounce shadow-md">
+            <Lock className="w-6 h-6 text-amber-500 fill-amber-50" />
+          </div>
+
+          <h2 className="text-lg sm:text-xl font-extrabold tracking-tight text-slate-800">
+            가입 승인 대기 중 🔒
+          </h2>
+          <p className="text-xs text-slate-400 font-bold mt-1.5">{currentUser.email}</p>
+
+          <p className="text-xs text-slate-500 mt-4 leading-normal font-medium max-w-xs">
+            회원님의 구글 로그인 정보가 안전하게 기록되었습니다.<br/><br/>
+            현재 <strong>승인 대기 상태</strong>입니다. 최고관리자(gukhyunglee@gmail.com)가 확인 후 가입 승인을 완료하면, 이 컴퓨터에서 페이지가 실시간으로 자동 활성화됩니다!
+          </p>
+
+          <div className="w-full h-[1px] bg-slate-100 my-5" />
+
+          {/* Simple sign out / account change helper */}
+          <button
+            onClick={handleLogoutAction}
+            className="w-full py-2.5 bg-slate-50 hover:bg-slate-100 text-slate-600 border border-slate-200 rounded-xl text-xs font-bold transition-all cursor-pointer hover:scale-[1.01]"
+          >
+            다른 계정으로 로그인 또는 로그아웃
+          </button>
+        </div>
+      </div>
+    </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-slate-50 flex flex-col font-sans text-slate-900 overflow-hidden select-none">
+      
+      {/* 1. TOP RESPONSIVE BRAND HEADER & HAMBURGER MENU */}
+      {renderNavbar()}
+
+      {/* Main wizard body */}
+      <div className="flex-1 overflow-hidden relative">
+        <AnimatePresence mode="wait">
+          {activeStep === 1 ? (
+            /* STEP 1 Screen window (Department List and Roster Data Setup) */
+            <motion.div
+              key="step1-window"
+              initial={{ opacity: 0, x: -15 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 15 }}
+              transition={{ duration: 0.25 }}
+              className="absolute inset-0 flex flex-col p-4 md:p-6 lg:p-8 gap-4 overflow-y-auto"
+            >
+              {/* Grid-based interactive department switcher card */}
+              <div className="w-full bg-white border border-slate-200/90 rounded-3xl p-4 sm:p-5 shadow-sm shrink-0">
+                {/* Horizontal / Grid-friendly dynamic department list with lock/unlock overlays */}
+                <div className="flex flex-wrap gap-2">
+                  {/* Add Department Button integrated inside the grid */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingDept(null);
+                      setDeptNameInput('');
+                      setDeptPasswordInput('');
+                      setIsDeptModalOpen(true);
+                    }}
+                    className="px-3.5 py-3 rounded-2xl border border-dashed border-slate-300 hover:border-indigo-400 bg-slate-50/30 hover:bg-indigo-50/20 text-slate-600 hover:text-indigo-600 transition-all cursor-pointer flex items-center justify-center gap-1.5 min-w-[140px] md:min-w-[170px] select-none text-xs font-bold"
+                  >
+                    <Plus className="w-3.5 h-3.5 text-indigo-500" />
+                    <span>새 부서 추가</span>
+                  </button>
+
+                  {departments.map((dept) => {
+                    const isActive = selectedDeptId === dept.id;
+                    const isUnlocked = unlockedDepts.includes(dept.id);
+                    const memberCount = members.filter(m => m.departmentId === dept.id).length;
+
+                    return (
+                      <div
+                        key={dept.id}
+                        onClick={() => setSelectedDeptId(dept.id)}
+                        className={`px-3.5 py-3 rounded-2xl border transition-all cursor-pointer flex items-center justify-between gap-3 min-w-[140px] md:min-w-[170px] select-none hover:shadow-xs relative ${
+                          isActive
+                            ? 'bg-indigo-50/70 border-indigo-200 shadow-sm'
+                            : 'bg-slate-50/60 border-slate-200/80 hover:bg-slate-100/50 hover:border-slate-300'
+                        }`}
+                      >
+                        <div className="min-w-0 flex-1 space-y-0.5">
+                          <h4 className={`text-xs font-black truncate ${isActive ? 'text-indigo-800' : 'text-slate-700'}`}>
+                            {dept.name}
+                          </h4>
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[9px] text-slate-400 font-bold">인원: {memberCount}명</span>
+                            <span className="text-slate-300 text-[9px]">•</span>
+                            <span className={`text-[9px] font-bold flex items-center gap-0.5 ${isUnlocked ? 'text-emerald-600' : 'text-slate-400'}`}>
+                              {isUnlocked ? <Unlock className="w-2.5 h-2.5" /> : <Lock className="w-2.5 h-2.5" />}
+                              {isUnlocked ? '편집인증' : '수정잠금'}
+                            </span>
+                          </div>
                         </div>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDeleteMember(member.id);
-                          }}
-                          className={`absolute right-1.5 p-1 rounded hover:bg-red-50 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity ${
-                            isFlipped ? 'text-white hover:bg-blue-700 hover:text-white' : 'text-slate-300'
-                          }`}
-                        >
-                          <X className="w-3.5 h-3.5" />
-                        </button>
+
+                        {/* Inline actions inside selected department cell */}
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setEditingDept(dept);
+                              setDeptNameInput(dept.name);
+                              setDeptPasswordInput(dept.password);
+                              setIsDeptModalOpen(true);
+                            }}
+                            className="p-1 rounded bg-white hover:bg-slate-100 border border-slate-200 text-slate-400 hover:text-indigo-600 transition-colors shadow-2xs"
+                            title="부서 정보 및 권한 암호 수정"
+                          >
+                            <Edit3 className="w-3 h-3" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeleteDepartment(dept.id);
+                            }}
+                            className="p-1 rounded bg-white hover:bg-red-50 border border-slate-200 text-slate-400 hover:text-red-500 transition-colors shadow-2xs"
+                            title="이 부서 영구 삭제"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        </div>
                       </div>
                     );
                   })}
                 </div>
-              )}
-
-              {/* ACTION TRIGGER: HUGE SHUFFLE TRIGGER CARD */}
-              <div className="pt-2">
-                <button
-                  type="button"
-                  id="trigger-shuffle-btn"
-                  disabled={members.length === 0 || isShuffling}
-                  onClick={performShuffle}
-                  className={`w-full py-4 text-base font-black tracking-wide rounded-2xl flex items-center justify-center gap-2.5 shadow-lg transition-all duration-300 ${
-                    members.length === 0 || isShuffling
-                      ? 'bg-slate-100 text-slate-400 cursor-not-allowed shadow-none'
-                      : 'bg-gradient-to-r from-indigo-600 via-indigo-600 to-violet-600 text-white hover:from-indigo-700 hover:to-violet-700 hover:-translate-y-0.5 active:translate-y-0 shadow-indigo-150'
-                  }`}
-                >
-                  <Shuffle className={`w-5 h-5 ${isShuffling ? 'animate-spin' : ''}`} />
-                  {isShuffling ? '대자연의 에너지를 섞는 중...' : '마법 같은 랜덤 조 편성 시작하기'}
-                </button>
               </div>
-            </div>
 
-            {/* 2. Primary Showcase Stage (Active Shuffle or Results) */}
-            <div id="results-and-shuffling-stage" className="space-y-6">
-              
-              {/* SHUFFLE ACTIVE ANIMATION CONTAINER */}
-              {isShuffling && (
-                <div className="bg-gradient-to-tr from-slate-900 via-indigo-950 to-indigo-900 rounded-3xl p-8 text-center text-white relative overflow-hidden shadow-2xl pulse-glow">
-                  {/* Decorative background lights */}
-                  <div className="absolute top-1/4 left-1/4 w-40 h-40 bg-indigo-500/20 rounded-full blur-3xl animate-pulse"></div>
-                  <div className="absolute bottom-1/4 right-1/4 w-40 h-40 bg-pink-500/10 rounded-full blur-3xl animate-pulse"></div>
-
-                  <div className="relative z-10 space-y-8 py-6">
-                    <div className="inline-flex py-1.5 px-4 bg-white/10 backdrop-blur-md rounded-full border border-white/10 text-xs font-semibold text-indigo-300 items-center gap-1.5 animate-bounce-soft">
-                      <Sparkles className="w-3.5 h-3.5 text-pink-400" />
-                      부서 조원 대이동 및 가상 배정 시뮬레이션
-                    </div>
-
-                    <div className="space-y-2">
-                      <h3 className="text-xl sm:text-2xl font-black tracking-tight text-white animate-pulse">
-                        엄격하고 공정한 셔플 카드가 정렬을 조합하는 중입니다...
-                      </h3>
-                      <p className="text-sm text-indigo-200 max-w-md mx-auto font-medium">
-                        성향 쏠림, 부서 분포 및 고유 난수를 수용하여 우주적 에너지로 최적의 조합을 연산하고 있습니다.
-                      </p>
-                    </div>
-
-                    {/* Highly active swirling particles mimicking a shuffle */}
-                    <div className="flex justify-center items-center gap-3">
-                      <div className="w-4 h-4 rounded-full bg-indigo-500 animate-ping"></div>
-                      <div className="w-50 h-10 border border-indigo-700 rounded-full flex items-center justify-around px-4 bg-indigo-900/40 backdrop-blur relative overflow-hidden">
-                        <div className="absolute top-0 bottom-0 left-0 bg-indigo-600 animate-[pulse_1s_infinite] w-2/3 opacity-30"></div>
-                        <span className="text-[10px] text-indigo-300 font-mono tracking-widest">{`SHUFFLING_${Date.now().toString().slice(-4)}`}</span>
-                      </div>
-                      <div className="w-4 h-4 rounded-full bg-pink-500 animate-ping"></div>
+              {/* Full Width Integrated List & Controls Panel */}
+              <div className="flex-1 w-full bg-white border border-slate-200 rounded-3xl shadow-sm p-6 sm:p-8 flex flex-col min-h-[400px]">
+                {/* Minimized Panel Header: 1-line layout */}
+                <div className="flex flex-row items-center justify-between gap-3 pb-3 border-b border-slate-150 shrink-0 select-none">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <h3 className="text-xs sm:text-sm font-black text-slate-800 flex items-center gap-1.5 shrink-0 select-none">
+                      {departments.find(d => d.id === selectedDeptId)?.name || '선택된 부서'} 명단
+                      <span className="text-[10px] bg-slate-100 text-slate-500 font-bold px-1.5 py-0.5 rounded-md">
+                        {filteredMembers.length}명
+                      </span>
+                    </h3>
+                    <div className="hidden sm:flex items-center gap-2 text-[10px] text-slate-400 font-semibold select-none shrink-0">
+                      <span className="text-indigo-600">참가 {filteredMembers.filter(m => m.selected !== false).length}명</span>
+                      <span className="text-slate-300">|</span>
+                      <span>제외 {filteredMembers.filter(m => m.selected === false).length}명</span>
+                      <span className="text-slate-300">|</span>
+                      {isDbLoading ? (
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded flex items-center gap-1.5 font-bold">
+                            <RefreshCw className="w-3 h-3 animate-spin text-amber-500" />
+                            실시간 클라우드 연결 중...
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              safeStorage.setItem('force_offline_mode', 'true');
+                              setIsOfflineMode(true);
+                              setIsDbLoading(false);
+                            }}
+                            className="bg-slate-250 hover:bg-slate-200 text-slate-705 px-1.5 py-0.5 rounded text-[9px] font-black cursor-pointer transition-colors"
+                            title="데이터베이스 실시간 연결을 건너뛰고 브라우저 캐시 전용 오프라인 모드로 즉시 시작합니다."
+                          >
+                            오프라인 강제 전환
+                          </button>
+                        </div>
+                      ) : isOfflineMode ? (
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded flex items-center gap-1.5 font-bold">
+                            <span className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-pulse"></span>
+                            로컬 오프라인 모드
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              safeStorage.removeItem('force_offline_mode');
+                              window.location.reload();
+                            }}
+                            className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded text-[9px] font-black cursor-pointer transition-colors"
+                          >
+                            클라우드 연결 시도
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded flex items-center gap-1.5 font-bold">
+                            <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></span>
+                            실시간 클라우드 동기화 완료
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              safeStorage.setItem('force_offline_mode', 'true');
+                              window.location.reload();
+                            }}
+                            className="bg-slate-100 hover:bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-[9px] font-black cursor-pointer transition-colors"
+                          >
+                            오프라인 전환
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
+
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => handleToggleAll(true)}
+                      className="px-2.5 py-1.5 bg-indigo-50 hover:bg-indigo-100/70 text-indigo-700 text-[10px] font-extrabold rounded-lg transition-all cursor-pointer"
+                    >
+                      전체선택
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleToggleAll(false)}
+                      className="px-2.5 py-1.5 bg-slate-50 border border-slate-200 hover:bg-slate-100 text-slate-600 text-[10px] font-extrabold rounded-lg transition-all cursor-pointer"
+                    >
+                      전체해제
+                    </button>
+                  </div>
                 </div>
-              )}
 
-              {/* RENDER FINISHED SHUFFLED REALIGNMENT GROUPS */}
-              {animationStep === 'done' && teams.length > 0 && (
-                <div id="final-teams-card" className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm space-y-6 animate-fade-in">
-                  
-                  {/* Header controller for Results */}
-                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between pb-4 border-b border-slate-100 gap-4">
-                    <div className="flex items-center gap-2">
-                      <span className="p-2 rounded-xl bg-indigo-50 text-indigo-600">
-                        <Layers className="w-5 h-5" />
-                      </span>
-                      <div>
-                        <h3 className="text-lg font-black text-slate-800">
-                          🎉 조 편성 최종 완료 !
-                        </h3>
-                        <p className="text-xs text-slate-400 mt-0.5">
-                          부서원들의 자리가 재배치되었습니다. 자유롭게 수동으로 드래그 앤 드롭 하거나 수동 배치 조정이 가능합니다.
-                        </p>
+                {/* Highly compact Roster database Grid view with maximized density */}
+                <div className="flex-1 overflow-y-auto py-2.5 minimal-scrollbar mt-1">
+                  <AnimatePresence>
+                    {filteredMembers.length > 0 ? (
+                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-2">
+                        {filteredMembers.map((member) => (
+                          <MemberItemCard
+                            key={member.id}
+                            member={member}
+                            onDelete={handleDeleteMember}
+                            onToggleSelect={handleToggleSelect}
+                            onEdit={(m) => {
+                              setEditingMember(m);
+                              setIsAddMemberModalOpen(true);
+                            }}
+                          />
+                        ))}
                       </div>
-                    </div>
+                    ) : (
+                      <div className="text-center py-16 text-slate-400">
+                        <Users className="w-9 h-9 mx-auto opacity-30 mb-2 text-indigo-500" />
+                        <p className="text-xs font-bold text-slate-500">이 부서에 등록된 부서원이 없습니다.</p>
+                        <p className="text-[10px] text-slate-400 mt-1">아래의 등록 버튼을 클릭하여 소유자 비밀번호 검증 후 추가해주세요.</p>
+                      </div>
+                    )}
+                  </AnimatePresence>
+                </div>
 
-                    <div className="flex items-center gap-2 self-start sm:self-auto">
+                {/* Compact Toolbar at Bottom - fitting fully on a single line with Backup & Restore supports */}
+                <div className="pt-3 border-t border-slate-100 flex flex-wrap items-center justify-center gap-2 shrink-0 select-none">
+                  {/* Hidden input for loading backup files */}
+                  <input
+                    id="import-backup-file"
+                    type="file"
+                    accept=".json"
+                    onChange={handleImportBackup}
+                    className="hidden"
+                  />
+
+                  <button
+                    id="btn-trigger-add-modal"
+                    onClick={() => {
+                      setEditingMember(null);
+                      setIsAddMemberModalOpen(true);
+                    }}
+                    className="px-3.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white font-extrabold text-[11px] rounded-lg shadow-sm flex items-center gap-1 cursor-pointer transition-all hover:scale-[1.02]"
+                  >
+                    <Plus className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>팀원 등록</span>
+                  </button>
+                  <button
+                    onClick={handleResetToDefault}
+                    className="px-3 py-1.5 bg-slate-50 border border-slate-200 text-slate-600 hover:bg-slate-100 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1 transition-all cursor-pointer"
+                    title="기본 데모 부서원 목록으로 되돌려 놓습니다."
+                  >
+                    <RotateCcw className="w-3 h-3 text-slate-500" />
+                    <span>부서인원 리셋</span>
+                  </button>
+                  <button
+                    onClick={handleClearAll}
+                    className="px-3 py-1.5 bg-red-50 border border-red-100 text-red-600 hover:bg-red-100/70 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1 transition-all cursor-pointer"
+                    title="모든 인원을 비웁니다."
+                  >
+                    <Trash2 className="w-3 h-3 text-red-500" />
+                    <span>부서원 전체비우기</span>
+                  </button>
+
+                  <span className="w-px h-4 bg-slate-200 hidden sm:inline" />
+
+                  <button
+                    onClick={handleExportBackup}
+                    className="px-3 py-1.5 bg-indigo-50 border border-indigo-150 text-indigo-700 hover:bg-indigo-100/50 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1 transition-all cursor-pointer"
+                    title="부서원 명단을 안전하게 PC/스마트폰에 파일로 받아놓습니다."
+                  >
+                    <Download className="w-3 h-3 text-indigo-600" />
+                    <span>명단 파일백업</span>
+                  </button>
+                  <button
+                    onClick={() => document.getElementById('import-backup-file')?.click()}
+                    className="px-3 py-1.5 bg-emerald-50 border border-emerald-150 text-emerald-850 hover:bg-emerald-100/50 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1 transition-all cursor-pointer"
+                    title="저장되었던 다운로드 파일(.json)을 불러와 복구합니다."
+                  >
+                    <Upload className="w-3 h-3 text-emerald-600" />
+                    <span>명단 파일인증/복구</span>
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          ) : activeStep === 2 ? (
+            /* STEP 2 Screen window (Compact Top Settings & Wide Results map) */
+            <motion.div
+              key="step2-window"
+              initial={{ opacity: 0, x: 15 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -15 }}
+              transition={{ duration: 0.25 }}
+              className="absolute inset-0 flex flex-col p-4 md:p-6 lg:p-8 gap-5 overflow-y-auto"
+            >
+              {/* Compact Minimized Top Control Card */}
+              <div className="bg-white border border-slate-200 rounded-2xl p-3 px-4 shadow-sm flex flex-col md:flex-row items-center justify-between gap-4 shrink-0 transition-all">
+                {/* Control Left: Single-line Navigation & small title */}
+                <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto">
+                  <button
+                    onClick={() => setActiveStep(1)}
+                    className="inline-flex items-center gap-1 text-[11px] text-indigo-600 hover:text-indigo-800 font-bold transition-all cursor-pointer hover:underline shrink-0"
+                    title="부서 데이터 정보 설정 창으로 돌라갑니다."
+                  >
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15 19l-7-7 7-7"></path>
+                    </svg>
+                    <span>등록</span>
+                  </button>
+                  <span className="text-slate-300 text-xs shrink-0">|</span>
+                  <span className="text-xs font-bold text-slate-800 tracking-tight shrink-0">추첨 부서 지정:</span>
+                  
+                  {/* Department Picker dropdown for Draw Shuffle */}
+                  <select
+                    value={selectedDeptId || ''}
+                    onChange={(e) => {
+                      setSelectedDeptId(e.target.value || null);
+                      setGroups([]); // Clear previous target draft values
+                    }}
+                    className="bg-slate-50 border border-slate-200 text-xs font-extrabold px-2.5 py-1.5 rounded-lg text-slate-700 focus:outline-none focus:ring-1 focus:ring-indigo-500 shrink-0 cursor-pointer"
+                  >
+                    {departments.map((d) => (
+                      <option key={d.id} value={d.id}>
+                        {d.name} ({members.filter(m => m.departmentId === d.id).length}명)
+                      </option>
+                    ))}
+                  </select>
+
+                  <span className="hidden sm:inline text-[10px] font-bold text-slate-400 bg-slate-100 px-2.5 py-1 rounded-full shrink-0">
+                    전체 {filteredMembers.length}명 / 참여예정 {filteredMembers.filter(m => m.selected !== false).length}명
+                  </span>
+                </div>
+
+                {/* Control Right: Small input configuration & Instant shuffle button horizontally aligned */}
+                <div className="flex flex-wrap items-center gap-3 shrink-0 justify-end w-full md:w-auto">
+                  <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl p-1 px-3 md:p-1.5 md:px-4">
+                    <span className="text-[11px] md:text-xs font-black text-slate-700 select-none">조 개수:</span>
+                    <button
+                      type="button"
+                      onClick={() => setGroupCount((prev) => Math.max(1, prev - 1))}
+                      disabled={groupCount <= 1}
+                      className="w-6 h-6 md:w-7 md:h-7 bg-white hover:bg-slate-100 disabled:opacity-45 rounded-lg flex items-center justify-center font-extrabold text-xs text-slate-600 border border-slate-200 transition-all cursor-pointer shadow-sm active:scale-95 shrink-0"
+                    >
+                      -
+                    </button>
+                    <input
+                      id="sidebar-group-input"
+                      type="number"
+                      min="1"
+                      max={Math.max(1, filteredMembers.filter(m => m.selected !== false).length)}
+                      value={groupCount}
+                      onChange={(e) => {
+                        const val = parseInt(e.target.value, 10);
+                        const activeCount = filteredMembers.filter(m => m.selected !== false).length;
+                        if (!isNaN(val)) {
+                          setGroupCount(Math.min(Math.max(1, activeCount || 1), Math.max(1, val)));
+                        } else {
+                          (e.target as any).value = '';
+                        }
+                      }}
+                      onBlur={(e) => {
+                        const val = parseInt(e.target.value, 10);
+                        const activeCount = filteredMembers.filter(m => m.selected !== false).length;
+                        if (isNaN(val) || val < 1) {
+                          setGroupCount(3);
+                        } else {
+                          setGroupCount(Math.min(Math.max(1, activeCount || 1), val));
+                        }
+                      }}
+                      className="w-10 sm:w-16 h-6 md:h-7 text-center font-black text-xs text-indigo-750 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 transition-all select-all bubble-input"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setGroupCount((prev) => Math.min(filteredMembers.filter(m => m.selected !== false).length, prev + 1))}
+                      disabled={groupCount >= filteredMembers.filter(m => m.selected !== false).length}
+                      className="w-6 h-6 md:w-7 md:h-7 bg-white hover:bg-slate-100 disabled:opacity-45 rounded-lg flex items-center justify-center font-extrabold text-xs text-slate-600 border border-slate-200 transition-all cursor-pointer shadow-sm active:scale-95 shrink-0"
+                    >
+                      +
+                    </button>
+                  </div>
+
+                  {/* Tiny shuffling button */}
+                  <button
+                    id="sidebar-action-shuffle"
+                    onClick={triggerShuffle}
+                    disabled={filteredMembers.filter(m => m.selected !== false).length === 0 || isShuffling}
+                    className="h-8.5 px-4 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white rounded-lg font-bold text-xs shadow-sm flex items-center gap-1.5 transition-all cursor-pointer hover:scale-[1.02]"
+                  >
+                    <Shuffle className="w-3.5 h-3.5 text-emerald-300 animate-spin" style={{ animationDuration: '6s' }} />
+                    <span>셔플 가동</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Main Results Board */}
+              <div id="main-results-board" className="flex-1 flex flex-col gap-4">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-1 border-b border-slate-100">
+                  <div>
+                    <h3 className="text-sm font-black text-slate-800 flex items-center gap-2 select-none">
+                      실시간 셔플 결과표 
+                      <span className="text-[10px] bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-md font-bold">
+                        {departments.find(d => d.id === selectedDeptId)?.name || '현 부서'}
+                      </span>
+                      <span className="text-slate-400 font-normal text-xs">
+                        {groups.length > 0 ? `— 총 ${groups.length}개 조 배정 완료` : '— 미편성 상태'}
+                      </span>
+                    </h3>
+                  </div>
+                  
+                  {groups.length > 0 && (
+                    <div className="flex flex-wrap gap-2 shrink-0">
+                      {/* Redraw button */}
                       <button
-                        type="button"
-                        id="reset-teams-btn"
-                        onClick={handleResetTeams}
-                        className="p-2 text-xs text-slate-500 hover:text-slate-800 hover:bg-slate-100/70 border border-slate-200 rounded-xl transition-all"
+                        id="btn-reset-groups"
+                        onClick={() => {
+                          setGroups([]);
+                        }}
+                        className="px-3 py-1.5 text-xs font-semibold text-red-600 bg-red-50 hover:bg-red-100/80 border border-red-100 rounded-lg shadow-sm transition-all flex items-center gap-1 cursor-pointer"
+                        title="조 편성 결과를 완전 초기화하고 대기 상태로 되돌립니다."
                       >
-                        결과 닫기
+                        <RotateCcw className="w-3 h-3 text-red-500" />
+                        결과 초기화 (리셋)
                       </button>
-                      
+
                       <button
-                        type="button"
-                        id="copy-results-btn"
-                        onClick={handleCopyResults}
-                        className={`px-4 py-2 text-xs font-black rounded-xl transition-all flex items-center gap-1.5 shadow-sm ${
-                          copiedResult 
-                            ? 'bg-emerald-600 text-white' 
-                            : 'bg-indigo-600 hover:bg-indigo-700 text-white'
-                        }`}
+                        id="btn-reshuffle"
+                        onClick={triggerShuffle}
+                        className="px-3 py-1.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg shadow-md hover:shadow-indigo-100 transition-all flex items-center gap-1 cursor-pointer"
+                        title="현재 구성원 그대로 다시 무작위로 추첨을 진행합니다"
                       >
-                        {copiedResult ? (
+                        <Shuffle className="w-3 h-3" />
+                        다시 추첨하기
+                      </button>
+
+                      <button
+                        id="btn-copy-sidebar"
+                        onClick={handleCopyResults}
+                        className="px-3 py-1.5 text-xs font-semibold text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 shadow-sm transition-all focus:outline-none flex items-center gap-1 cursor-pointer"
+                      >
+                        {copied ? (
                           <>
-                            <Check className="w-4 h-4" />
+                            <Check className="w-3.5 h-3.5 text-emerald-500" />
                             복사 완료!
                           </>
                         ) : (
                           <>
-                            <Copy className="w-4 h-4" />
-                            텍스트 결과 복사
+                            <Share2 className="w-3.5 h-3.5" />
+                            결과 텍스트 복사
                           </>
                         )}
                       </button>
                     </div>
-                  </div>
+                  )}
+                </div>
 
-                  {/* TEAMS LAYOUT GRID */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-5">
-                    {teams.map((team) => {
-                      const themeMatch = TEAM_THEME_COLORS[Math.abs(team.id.charCodeAt(5) || 0) % TEAM_THEME_COLORS.length] || TEAM_THEME_COLORS[0];
-                      return (
-                        <div
-                          key={team.id}
-                          className={`rounded-2xl border-2 p-4 flex flex-col justify-between transition-all shadow-sm ${themeMatch.bg} ${themeMatch.border}`}
-                          onDragOver={(e) => e.preventDefault()}
-                          onDrop={(e) => {
-                            e.preventDefault();
-                            const memberId = e.dataTransfer.getData('text/plain');
-                            if (memberId) {
-                              moveMemberToTeam(memberId, team.id);
-                            }
-                          }}
+                <div className="flex-1 min-h-[350px]">
+                  {groups.length > 0 ? (
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                      {groups.map((group, groupIdx) => (
+                        <motion.div
+                          key={group.id}
+                          initial={{ opacity: 0, scale: 0.96, y: 12 }}
+                          animate={{ opacity: 1, scale: 1, y: 0 }}
+                          transition={{ duration: 0.35, delay: groupIdx * 0.06 }}
+                          className="bg-white rounded-3xl border border-slate-200 shadow-sm hover:shadow-md transition-all p-5 flex flex-col h-full overflow-hidden"
                         >
-                          <div>
-                            {/* Team Header Title */}
-                            <div className="flex items-center justify-between pb-3 mb-3 border-b border-dashed border-slate-300/60">
-                              <span className={`text-sm font-black px-3 py-1 rounded-xl shadow-sm ${themeMatch.badge}`}>
-                                {team.name}
-                              </span>
-                              <span className="text-[11px] font-black text-slate-500">
-                                {team.members.length}명 대형
-                              </span>
+                          {/* Header bar of Team block */}
+                          <div className="flex items-center justify-between mb-4 pb-2 border-b border-slate-100">
+                            <div className="flex-1 min-w-0">
+                              <input
+                                type="text"
+                                value={group.name}
+                                onChange={(e) => handleRenameGroup(group.id, e.target.value)}
+                                className="w-full text-indigo-600 font-bold text-sm bg-transparent border-b border-transparent hover:border-slate-200 focus:border-indigo-500 focus:outline-none px-1 rounded transition-all truncate"
+                                title="더블클릭하여 조 이름 수정"
+                              />
                             </div>
-
-                            {/* Team Members List */}
-                            {team.members.length === 0 ? (
-                              <div className="py-6 text-center text-xs text-slate-400 italic">
-                                빈 팀입니다. 이곳으로 부서원을 떨어뜨리세요!
-                              </div>
-                            ) : (
-                              <div className="space-y-2 min-h-[100px]">
-                                {team.members.map((member) => (
-                                  <div
-                                    key={member.id}
-                                    draggable
-                                    onDragStart={(e) => {
-                                      e.dataTransfer.setData('text/plain', member.id);
-                                    }}
-                                    className="bg-white p-2.5 rounded-xl border border-slate-200/80 hover:border-slate-300 shadow-sm cursor-grab active:cursor-grabbing hover:scale-[1.01] transition-all flex items-center justify-between group"
-                                  >
-                                    <div className="flex items-center gap-2">
-                                      {renderAvatar(member, "w-8 h-8 text-xs")}
-                                      <div>
-                                        <p className="text-xs font-black text-slate-800">{member.name}</p>
-                                        <p className="text-[9px] text-slate-400 font-bold">{member.role}</p>
-                                      </div>
-                                    </div>
-
-                                    {/* Action button to quickly shift member to another group */}
-                                    <div className="flex items-center gap-1">
-                                      <select
-                                        className="text-[9px] font-bold text-slate-500 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-indigo-400 opacity-0 group-hover:opacity-100 transition-opacity"
-                                        value={team.id}
-                                        onChange={(e) => moveMemberToTeam(member.id, e.target.value)}
-                                      >
-                                        <option value={team.id} disabled>조 이동</option>
-                                        {teams.filter(t => t.id !== team.id).map(t => (
-                                          <option key={t.id} value={t.id}>{t.name}</option>
-                                        ))}
-                                      </select>
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
+                            <span className="px-2 py-0.5 bg-slate-100 rounded text-[10px] font-bold text-slate-500 uppercase tracking-wider shrink-0">
+                              {group.members.length} Members
+                            </span>
                           </div>
 
-                          <div className="pt-3 mt-3 border-t border-dashed border-slate-300/40 text-[9px] text-slate-400 text-right">
-                            * 소원을 담은 완벽한 조합
+                          {/* Member pictures grid */}
+                          <div className="grid grid-cols-4 gap-3">
+                            {group.members.map((member, mIdx) => (
+                              <div key={member.id} className="space-y-1.5 text-center relative group">
+                                <div className="w-full aspect-square bg-slate-100 rounded-lg overflow-hidden border border-slate-100 shadow-sm relative">
+                                  <img
+                                    src={member.photoUrl}
+                                    alt={member.name}
+                                    referrerPolicy="no-referrer"
+                                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
+                                  />
+                                  {mIdx === 0 && (
+                                    <div className="absolute top-1 left-1 bg-amber-400 text-white p-0.5 rounded-md shadow-sm" title="대표조장">
+                                      <Crown className="w-3 h-3 text-white" />
+                                    </div>
+                                  )}
+                                </div>
+                                
+                                <div className="px-0.5">
+                                  <p className="text-[10px] font-bold text-slate-800 truncate leading-tight">
+                                    {member.name}
+                                  </p>
+                                  <p className="text-[8px] text-slate-400 truncate leading-none mt-0.5">
+                                    {mIdx === 0 ? '대표조장 👑' : '팀원'}
+                                  </p>
+                                </div>
+                              </div>
+                            ))}
                           </div>
-                        </div>
-                      );
-                    })}
+                        </motion.div>
+                      ))}
+                    </div>
+                  ) : (
+                    /* Elegant Empty Placeholder grid */
+                    <div className="bg-white border border-slate-200 rounded-3xl p-12 text-center flex flex-col items-center justify-center min-h-[360px] h-full shadow-[inset_0_2px_4px_rgba(0,0,0,0.01)]">
+                      <div className="w-16 h-16 rounded-2xl bg-indigo-50 flex items-center justify-center text-indigo-500 mb-4 animate-float shadow-inner">
+                        <Layers className="w-7 h-7" />
+                      </div>
+                      <h3 className="text-lg font-bold text-slate-800 mb-1">편성된 조 목록이 비어있습니다</h3>
+                      <p className="text-xs text-slate-400 max-w-sm mb-6 leading-relaxed select-none">
+                        추첨 후보 인원 셋업이 끝나셨다면, 상단 제어 바에서 조 개수를 선택하시고 &lsquo;셔플 가동&rsquo;을 눌러 결과를 확인해보세요!
+                      </p>
+                      
+                      <div className="flex gap-3">
+                        <button
+                          onClick={() => setActiveStep(1)}
+                          className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition-all cursor-pointer"
+                        >
+                          ⬅ 부서원 수정하러 돌아가기
+                        </button>
+                        <button
+                          onClick={triggerShuffle}
+                          disabled={filteredMembers.filter(m => m.selected !== false).length === 0}
+                          className="px-6 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 text-white font-bold text-xs rounded-xl shadow-md cursor-pointer transition-all"
+                        >
+                          무작위 추첨 시작하기 🎲
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </motion.div>
+          ) : activeStep === 3 && appUser?.role === 'admin' ? (
+            /* STEP 3 Screen window (User Permission Admin Panel) */
+            <motion.div
+              key="step3-window"
+              initial={{ opacity: 0, x: 15 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -15 }}
+              transition={{ duration: 0.25 }}
+              className="absolute inset-0 flex flex-col p-4 md:p-6 lg:p-8 gap-6 overflow-y-auto"
+            >
+              {/* Header Info Block */}
+              <div id="admin-header-card" className="w-full bg-white border border-slate-200 rounded-3xl p-6 shadow-sm shrink-0">
+                <h2 className="text-xl font-extrabold text-slate-800 tracking-tight flex items-center gap-2">
+                  <Users className="w-5 h-5 text-indigo-600" />
+                  <span>구글 로그인 및 최고 관리 권한 승인 센터</span>
+                </h2>
+                <p className="text-xs text-slate-500 mt-1 max-w-2xl leading-normal">
+                  구글 Sign-In을 통해 시스템에 로그인 기록을 남긴 가입 대기자 및 일반 사용자들을 모니터링하고, 가입을 승인하거나 관리자 권한을 부여할 수 있습니다. 최고관리자만이 접근이 허용되고 실시간으로 연동됩니다.
+                </p>
+
+                {/* Metric blocks */}
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mt-5">
+                  <div className="bg-slate-50 border border-slate-150 rounded-2xl p-4 flex flex-col">
+                    <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider">전체 가입 계정</span>
+                    <span className="text-xl font-extrabold text-slate-800 mt-1">{users.length} 명</span>
+                  </div>
+                  <div className="bg-amber-50/55 border border-amber-100 rounded-2xl p-4 flex flex-col">
+                    <span className="text-[10px] text-amber-500 font-extrabold uppercase tracking-wider">승인 대기 중</span>
+                    <span className="text-xl font-extrabold text-amber-600 mt-1">
+                      {users.filter(u => !u.approved).length} 명
+                    </span>
+                  </div>
+                  <div className="bg-indigo-50/55 border border-indigo-100 rounded-2xl p-4 flex flex-col col-span-2 sm:col-span-1">
+                    <span className="text-[10px] text-indigo-500 font-extrabold uppercase tracking-wider">최고 관리자 수</span>
+                    <span className="text-xl font-extrabold text-indigo-650 mt-1">
+                      {users.filter(u => u.role === 'admin').length} 명
+                    </span>
                   </div>
                 </div>
-              )}
-            </div>
-            
-            {/* Elegant Tips info banner */}
-            <div className="bg-indigo-50/50 border border-indigo-100 rounded-2xl p-4 flex gap-3 text-slate-700">
-              <Sparkles className="w-5 h-5 text-indigo-500 flex-shrink-0 mt-0.5" />
-              <div className="text-xs space-y-1">
-                <span className="font-bold text-indigo-900">사용 꿀팁 가이드</span>
-                <p className="text-slate-600 leading-relaxed font-medium">
-                  조편성 완료 후, 결과를 수정하고 싶으시다면 원하는 부서원 카드 혹은 우측 상단의 조 이동 조절을 이용해 다른 조로 직접 수동 드래그 앤 드롭 이동 혹은 지정 이동할 수 있습니다.
-                </p>
               </div>
-            </div>
 
-          </main>
-        </div>
+              {/* Users card collection list */}
+              <div id="admin-user-list-card" className="bg-white border border-slate-200 rounded-3xl p-5 shadow-sm flex-1 overflow-hidden flex flex-col">
+                <div className="text-xs font-extrabold text-slate-400 tracking-wider mb-4 uppercase">
+                  등록 사용자 목록 ({users.length} 건)
+                </div>
+
+                <div className="flex-1 overflow-y-auto space-y-3.5 pr-2">
+                  {users.length === 0 ? (
+                    <div className="h-full flex flex-col items-center justify-center p-8 text-slate-400 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+                      <Users className="w-8 h-8 text-slate-300 shrink-0 mb-2 animate-pulse" />
+                      <p className="text-xs font-bold">등록된 사용자 정보가 비어있습니다.</p>
+                    </div>
+                  ) : (
+                    users.map((target) => (
+                      <div
+                        key={target.uid}
+                        id={`user-row-${target.uid}`}
+                        className="flex flex-col sm:flex-row items-start sm:items-center justify-between p-4 border border-slate-150 rounded-2xl hover:bg-slate-50/45 transition-colors gap-4"
+                      >
+                        {/* Left User details structure */}
+                        <div className="flex items-center gap-3">
+                          <img
+                            src={target.photoUrl || 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=100&auto=format&fit=crop&q=80'}
+                            alt={target.displayName}
+                            referrerPolicy="no-referrer"
+                            className="w-10 h-10 rounded-full border border-slate-200 shadow-xs"
+                          />
+                          <div>
+                            <div className="flex flex-wrap items-center gap-1.5 row-gap-1">
+                              <span className="font-extrabold text-slate-850 text-sm">
+                                {target.displayName}
+                              </span>
+                              {target.role === 'admin' ? (
+                                <span className="text-[9px] font-extrabold px-2 py-0.5 rounded-md bg-indigo-100 text-indigo-600">
+                                  최고관리자
+                                </span>
+                              ) : (
+                                <span className="text-[9px] font-extrabold px-2 py-0.5 rounded-md bg-slate-100 text-slate-600">
+                                  일반회원
+                                </span>
+                              )}
+                              
+                              {target.approved ? (
+                                <span className="text-[9px] font-extrabold px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-700">
+                                  승인 완료
+                                </span>
+                              ) : (
+                                <span className="text-[9px] font-extrabold px-2 py-0.5 rounded-md bg-amber-100 text-amber-700 animate-pulse">
+                                  가입 대기 중
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-xs text-slate-400 font-medium mt-1 select-all">
+                              {target.email}
+                            </div>
+                            <div className="text-[9px] text-slate-350 tracking-wide mt-0.5">
+                              최초 가입 시간: {new Date(target.createdAt).toLocaleString('ko-KR')}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Actions buttons */}
+                        <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto justify-end">
+                          <button
+                            id={`btn-approve-${target.uid}`}
+                            onClick={() => handleToggleApproval(target)}
+                            className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-colors cursor-pointer ${
+                              target.approved
+                                ? 'bg-amber-50 border-amber-100 text-amber-700 hover:bg-amber-100/50'
+                                : 'bg-emerald-50 border-emerald-150 text-emerald-850 hover:bg-emerald-100/50'
+                            }`}
+                          >
+                            {target.approved ? '승인 대기 상태로 전환' : '사용 승인하기'}
+                          </button>
+
+                          <button
+                            id={`btn-role-${target.uid}`}
+                            onClick={() => handleToggleRole(target)}
+                            className="px-3 py-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-xl text-xs font-bold transition-colors cursor-pointer"
+                          >
+                            {target.role === 'admin' ? '일반회원으로 지정' : '최고관리자 지정'}
+                          </button>
+
+                          <button
+                            id={`btn-delete-${target.uid}`}
+                            onClick={() => handleDeleteUser(target.uid)}
+                            className="px-3 py-1.5 bg-rose-50 border border-rose-100 hover:bg-rose-100/40 text-rose-650 rounded-xl text-xs font-bold transition-colors cursor-pointer"
+                          >
+                            삭제
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </motion.div>
+          ) : null}
+        </AnimatePresence>
       </div>
 
-      {/* BULK IMPORT MODAL DIALOG */}
-      {isBulkImportOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-fade-in">
-          <div className="bg-white rounded-3xl border border-slate-200 shadow-2xl max-w-lg w-full p-6 space-y-4">
-            <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-              <div className="flex items-center gap-2">
-                <Users className="w-5 h-5 text-indigo-500" />
-                <h3 className="text-base font-black text-slate-800">
-                  대용량 부서원 직접 일괄 등록
-                </h3>
-              </div>
-              <button
-                onClick={() => setIsBulkImportOpen(false)}
-                className="p-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-500"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="space-y-2">
-              <p className="text-xs text-slate-500 leading-relaxed font-semibold">
-                줄바꿈 한줄에 한 명씩 이름을 입력해주세요. 부서/역할을 함께 입력하려면 쉼표(,)나 공백(스페이스) 하나로 이름을 구분해주시면 됩니다.
-              </p>
-              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-[11px] font-mono text-slate-500">
-                <p className="font-bold mb-1 text-slate-700">📌 예시 입력 형태:</p>
-                <p>김민수 디자인팀</p>
-                <p>이지원, 마케팅팀</p>
-                <p>박정호 개발팀</p>
-                <p>송은우</p>
-              </div>
-            </div>
-
-            <div>
-              <textarea
-                rows={7}
-                placeholder="여기에 부서원 목록 복사 붙여넣기..."
-                value={bulkText}
-                onChange={(e) => setBulkText(e.target.value)}
-                className="w-full p-3 font-mono text-xs bg-slate-50 rounded-xl border border-slate-200 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-800"
-              />
-            </div>
-
-            <div className="flex justify-end gap-2 pt-2">
-              <button
-                type="button"
-                onClick={() => setIsBulkImportOpen(false)}
-                className="px-4 py-2 text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl"
-              >
-                취소
-              </button>
-              <button
-                type="button"
-                onClick={handleBulkImport}
-                disabled={!bulkText.trim()}
-                className={`px-4 py-2 text-xs font-bold rounded-xl text-white ${
-                  bulkText.trim() ? 'bg-indigo-600 hover:bg-indigo-700' : 'bg-slate-200 hover:bg-slate-200 cursor-not-allowed'
-                }`}
-              >
-                분석 및 일괄 추가
-              </button>
-            </div>
-          </div>
+      {/* 3. SLEEK SYSTEM FOOTER */}
+      <footer id="footer-system" className="h-10 bg-slate-800 text-slate-400 px-8 flex items-center justify-between text-[10px] font-semibold shrink-0 z-10 uppercase tracking-wider select-none">
+        <div>SYSTEM STATUS: READY TO SHUFFLE & EXPORT</div>
+        <div className="flex gap-4 tracking-normal">
+          <span>워크숍 분배 매니저 v4.6</span>
+          <span className="hidden sm:inline text-slate-600">|</span>
+          <span className="hidden sm:inline">ALGORITHM: RANDOM BALANCER CO-OP</span>
         </div>
-      )}
+      </footer>
+
+      {/* 4. SHUFFLING INTENSE SUSPENSE MODAL */}
+      <AnimatePresence>
+        {isShuffling && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-50 flex items-center justify-center p-4"
+          >
+            <motion.div
+              initial={{ scale: 0.94, y: 15 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.94, y: 15 }}
+              className="bg-white rounded-3xl shadow-2xl p-8 max-w-sm w-full border border-slate-100 text-center relative overflow-hidden"
+            >
+              {/* Colorful gradient indicator */}
+              <div className="absolute top-0 inset-x-0 h-1.5 bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500" />
+              
+              <div className="space-y-6">
+                <div className="mx-auto w-14 h-14 bg-indigo-50 rounded-2xl flex items-center justify-center text-indigo-600">
+                  <RefreshCw className="w-7 h-7 animate-spin" />
+                </div>
+
+                <div className="space-y-1.5">
+                  <h3 className="text-base font-bold text-slate-800">
+                    {shufflePhase === 'preparing' && '조 정보 취합 중...'}
+                    {shufflePhase === 'scrambling' && '카드를 고르게 섞는 중...'}
+                    {shufflePhase === 'positioning' && '팀 균등 분배 매칭 시뮬레이션...'}
+                    {shufflePhase === 'completed' && '조 편성 배치 완료!'}
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    안전하고 무작위가 보장된 셔플링을 보장합니다
+                  </p>
+                </div>
+
+                {/* Scrambling face display */}
+                <div className="h-24 flex items-center justify-center relative">
+                  <AnimatePresence mode="popLayout">
+                    {activeShuffleMember && (
+                      <motion.div
+                        key={activeShuffleMember.id}
+                        initial={{ scale: 0.6, opacity: 0 }}
+                        animate={{ scale: 1, opacity: 1 }}
+                        exit={{ scale: 1.4, opacity: 0 }}
+                        transition={{ duration: 0.1 }}
+                        className="absolute flex flex-col items-center gap-1"
+                      >
+                        <div className="w-14 h-14 rounded-full overflow-hidden border-2 border-indigo-500 shadow-md">
+                          <img
+                            src={activeShuffleMember.photoUrl}
+                            alt={activeShuffleMember.name}
+                            referrerPolicy="no-referrer"
+                            className="w-full h-full object-cover"
+                          />
+                        </div>
+                        <span className="text-[11px] font-bold text-slate-600">
+                          {activeShuffleMember.name} ({activeShuffleMember.role?.split('/')[0] || '부서원'})
+                        </span>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+
+                {/* Visual loading bar */}
+                <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
+                  <motion.div
+                    className="h-full bg-indigo-600"
+                    initial={{ width: '0%' }}
+                    animate={{ 
+                      width: shufflePhase === 'preparing' ? '25%' : 
+                             shufflePhase === 'scrambling' ? '70%' : 
+                             shufflePhase === 'positioning' ? '90%' : '100%' 
+                    }}
+                    transition={{ duration: 0.4 }}
+                  />
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* 5. ADD MEMBER MODAL POPUP */}
+      <AnimatePresence>
+        {isAddMemberModalOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-slate-950/70 backdrop-blur-xs z-50 flex items-center justify-center p-4"
+            onClick={() => setIsAddMemberModalOpen(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, y: 15, opacity: 0 }}
+              animate={{ scale: 1, y: 0, opacity: 1 }}
+              exit={{ scale: 0.95, y: 15, opacity: 0 }}
+              transition={{ type: 'spring', duration: 0.4 }}
+              className="bg-white border border-slate-200 rounded-3xl p-6 shadow-2xl w-full max-w-sm relative z-10"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between mb-3 pb-2 border-b border-slate-150">
+                <span className="text-xs font-bold text-slate-700 tracking-tight flex items-center gap-1.5">
+                  <Users className="w-4 h-4 text-indigo-500" />
+                  {editingMember ? '부서원 정보 수정' : '부서원 카드 추가'}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setIsAddMemberModalOpen(false)}
+                  className="w-6 h-6 hover:bg-slate-100 rounded-md flex items-center justify-center text-xs text-slate-400 hover:text-slate-600 transition-colors cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Renders the add/edit member form layout */}
+              <AddMemberForm
+                initialMember={editingMember}
+                onAddMember={(newMeta) => {
+                  handleAddMember(newMeta);
+                }}
+                onSaveMember={(id, updated) => {
+                  handleUpdateMember(id, updated);
+                }}
+              />
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* 6. SYSTEM DEPARTMENT MODAL (ADD / EDIT) */}
+      <AnimatePresence>
+        {isDeptModalOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-slate-950/75 backdrop-blur-xs z-50 flex items-center justify-center p-4"
+            onClick={() => setIsDeptModalOpen(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.95, y: 20 }}
+              className="bg-white border border-slate-200 rounded-3xl p-6 shadow-2xl w-full max-w-md relative z-10"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between mb-4 pb-2.5 border-b border-slate-100">
+                <h3 className="text-sm font-black text-slate-800 flex items-center gap-1.5">
+                  <Settings className="w-4 h-4 text-indigo-500" />
+                  {editingDept ? '부서 정보 및 권한 수정' : '새로운 부서 생성 (부서 신설)'}
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setIsDeptModalOpen(false)}
+                  className="w-6 h-6 hover:bg-slate-100 rounded-md flex items-center justify-center text-xs text-slate-400 hover:text-slate-600 transition-colors cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className="space-y-4">
+                <div className="space-y-1">
+                  <label htmlFor="dept-name" className="text-[10px] font-extrabold uppercase text-slate-400 tracking-wider">
+                    부서 이름
+                  </label>
+                  <input
+                    id="dept-name"
+                    type="text"
+                    required
+                    value={deptNameInput}
+                    onChange={(e) => setDeptNameInput(e.target.value)}
+                    placeholder="예: 마케팅 커뮤니케이션 본부, 전략 TF팀"
+                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-slate-50/50"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label htmlFor="dept-pwd" className="text-[10px] font-extrabold uppercase text-slate-400 tracking-wider">
+                    관리 승인 비밀번호 (권한 증명)
+                  </label>
+                  <input
+                    id="dept-pwd"
+                    type="text"
+                    value={deptPasswordInput}
+                    onChange={(e) => setDeptPasswordInput(e.target.value)}
+                    placeholder="미입력시 기본 1234로 지정됩니다"
+                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-slate-50/50"
+                  />
+                  <p className="text-[9px] text-slate-400 leading-normal font-sans">
+                    * 작성 및 지정을 시작한 관리인 본인만 부서원을 추가, 부서를 삭제, 편집 복구(Import)할 수 있도록 잠금용 검증 비밀번호를 마킹합니다.
+                  </p>
+                </div>
+
+                <div className="flex gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsDeptModalOpen(false)}
+                    className="flex-1 py-2 bg-slate-50 border border-slate-200 hover:bg-slate-100/80 rounded-xl text-xs font-bold text-slate-550 transition-colors cursor-pointer"
+                  >
+                    취소
+                  </button>
+                  <button
+                    type="button"
+                    onClick={editingDept ? handleUpdateDepartment : handleCreateDepartment}
+                    className="flex-1 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all hover:scale-[1.01]"
+                  >
+                    {editingDept ? '수정 사항 저장 및 검증' : '부서 생성 완료 🚀'}
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* 7. SECURE PASSCODE AUTHORIZATION CHALLENGE MODAL */}
+      <AnimatePresence>
+        {isPasswordModalOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-slate-950/75 backdrop-blur-xs z-50 flex items-center justify-center p-4"
+            onClick={() => setIsPasswordModalOpen(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, y: 15 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.95, y: 15 }}
+              className="bg-white border border-slate-200 rounded-3xl p-6 shadow-2xl w-full max-w-sm relative z-10 text-center"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="mx-auto w-11 h-11 bg-amber-55 text-amber-600 rounded-full flex items-center justify-center border border-amber-100 bg-amber-50 mb-3">
+                <Lock className="w-5 h-5 text-amber-500 fill-amber-50" />
+              </div>
+
+              <h3 className="text-sm font-black text-slate-800">
+                부서 소유자 권한 비밀번호 검증
+              </h3>
+              <p className="text-[10px] text-slate-400 mt-1 max-w-xs mx-auto leading-normal">
+                선택한 부서의 <strong>&lsquo;{departments.find(d => d.id === passwordTargetDeptId)?.name}&rsquo;</strong> 권한 확보가 필요합니다. 부서 생성 시 세팅한 비밀번호를 제공하십시오.
+              </p>
+
+              <div className="mt-4 space-y-3">
+                <input
+                  id="auth-pword-input"
+                  type="password"
+                  value={passwordInput}
+                  onChange={(e) => setPasswordInput(e.target.value)}
+                  placeholder="비밀번호(암호) 입력 (기본: 1234)"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleVerifyPassword();
+                  }}
+                  className="w-full text-center px-3 py-2 border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-indigo-500 text-sm font-black bg-slate-50"
+                  autoFocus
+                />
+
+                {passwordErrorMsg && (
+                  <p className="text-[9px] text-red-500 font-bold leading-normal">
+                    ⚠️ {passwordErrorMsg}
+                  </p>
+                )}
+
+                <div className="flex gap-2 pt-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setIsPasswordModalOpen(false)}
+                    className="flex-1 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-500 cursor-pointer hover:bg-slate-100 transition-colors"
+                  >
+                    취소
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleVerifyPassword}
+                    className="flex-1 py-1.5 bg-indigo-650 hover:bg-indigo-700 bg-indigo-600 font-extrabold text-white rounded-xl text-xs transition-shadow shadow-sm active:scale-95 cursor-pointer"
+                  >
+                    권한 인증 승인
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* 8. PWA INSTALL GUIDE MODAL */}
+      <AnimatePresence>
+        {isInstallGuideOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-slate-950/75 backdrop-blur-md z-50 flex items-center justify-center p-4"
+            onClick={() => setIsInstallGuideOpen(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, y: 20, opacity: 0 }}
+              animate={{ scale: 1, y: 0, opacity: 1 }}
+              exit={{ scale: 0.95, y: 20, opacity: 0 }}
+              transition={{ type: 'spring', duration: 0.45 }}
+              className="bg-white border border-slate-200 rounded-3xl p-6 md:p-8 shadow-2xl w-full max-w-lg relative z-10 overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Sparkle background accent */}
+              <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-50 rounded-full blur-3xl -z-10 pointer-events-none opacity-60" />
+              
+              {/* Modal Header */}
+              <div className="flex items-start justify-between gap-4 mb-5 pb-3 border-b border-slate-100">
+                <div className="flex gap-3">
+                  <div className="w-12 h-12 bg-indigo-50 border border-indigo-100 rounded-2xl flex items-center justify-center shrink-0 shadow-inner">
+                    <img
+                      src="/icon.svg"
+                      alt="TeamShuffle Icon"
+                      className="w-8 h-8 object-contain"
+                      referrerPolicy="no-referrer"
+                    />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-slate-800 tracking-tight flex items-center gap-1.5">
+                      TeamShuffle 홈 화면 앱 추가
+                    </h3>
+                    <p className="text-xs text-slate-400 mt-0.5">매일 한 번의 터치로 간편하게 스마트폰 앱으로 사용하세요!</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsInstallGuideOpen(false)}
+                  className="w-6 h-6 hover:bg-slate-100 rounded-md flex items-center justify-center text-xs text-slate-400 hover:text-slate-600 transition-colors cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Grid with Platform instructions */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 my-4">
+                {/* iPhone / iOS / Safari Column */}
+                <div className="bg-slate-50 border border-slate-150 rounded-2xl p-4 flex flex-col justify-between">
+                  <div>
+                    <span className="text-[10px] uppercase font-bold tracking-widest text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full inline-block mb-2">
+                       iPhone / Safari
+                    </span>
+                    <ul className="space-y-2.5 text-xs text-slate-600 font-medium">
+                      <li className="flex gap-2">
+                        <span className="w-5 h-5 bg-white border border-slate-200 rounded-full flex items-center justify-center font-bold text-[10px] text-slate-700 shrink-0">1</span>
+                        <span>사파리(Safari) 브라우저 하단 중앙의 <strong>공유 버튼 <span className="text-indigo-600 font-bold">⎋</span></strong>을 터치합니다.</span>
+                      </li>
+                      <li className="flex gap-2">
+                        <span className="w-5 h-5 bg-white border border-slate-200 rounded-full flex items-center justify-center font-bold text-[10px] text-slate-700 shrink-0">2</span>
+                        <span>메뉴를 아래로 내려 <strong>'홈 화면에 추가'</strong> 항목을 선택합니다.</span>
+                      </li>
+                      <li className="flex gap-2">
+                        <span className="w-5 h-5 bg-white border border-slate-200 rounded-full flex items-center justify-center font-bold text-[10px] text-slate-700 shrink-0">3</span>
+                        <span>상단 우측의 <strong>'추가'</strong> 버튼을 클릭하면 바탕화면에 설치됩니다!</span>
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+
+                {/* Android / Chrome Column */}
+                <div className="bg-slate-50 border border-slate-150 rounded-2xl p-4 flex flex-col justify-between">
+                  <div>
+                    <span className="text-[10px] uppercase font-bold tracking-widest text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full inline-block mb-2">
+                      🤖 Android / Chrome
+                    </span>
+                    <ul className="space-y-2.5 text-xs text-slate-600 font-medium">
+                      <li className="flex gap-2">
+                        <span className="w-5 h-5 bg-white border border-slate-200 rounded-full flex items-center justify-center font-bold text-[10px] text-slate-700 shrink-0">1</span>
+                        <span>위 항목의 <strong>'앱 설치'</strong> 버튼을 터치하거나 주소창의 더보기 <strong>(⋮) 아이콘</strong>을 클릭합니다.</span>
+                      </li>
+                      <li className="flex gap-2">
+                        <span className="w-5 h-5 bg-white border border-slate-200 rounded-full flex items-center justify-center font-bold text-[10px] text-slate-700 shrink-0">2</span>
+                        <span>안내 메뉴 중 <strong>'앱 설치'</strong> 혹은 <strong>'홈 화면에 추가'</strong>를 선택합니다.</span>
+                      </li>
+                      <li className="flex gap-2">
+                        <span className="w-5 h-5 bg-white border border-slate-200 rounded-full flex items-center justify-center font-bold text-[10px] text-slate-700 shrink-0">3</span>
+                        <span>자동 설치가 완료되고, 부서원 명단이 오프라인 상태에서도 작동합니다!</span>
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+
+              {/* Bottom footer notice */}
+              <div className="mt-5 pt-3.5 border-t border-slate-100 flex items-center justify-between text-[10px] text-slate-400 font-bold">
+                <span className="flex items-center gap-1">
+                  ⚡ 오프라인 완전 대응 / 0.1초 이내 초고속 구동
+                </span>
+                <button
+                  onClick={() => setIsInstallGuideOpen(false)}
+                  className="px-4 py-1.5 bg-slate-900 text-white rounded-xl text-xs hover:bg-slate-800 transition-colors cursor-pointer"
+                >
+                  확인 완료
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
     </div>
   );
 }
