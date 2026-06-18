@@ -4,11 +4,12 @@
  */
 
 import React, { useState, useRef, useEffect } from 'react';
-import { UploadCloud, Plus, User, Sparkles, Crop, Move, Check, Award } from 'lucide-react';
+import { UploadCloud, Plus, User, Sparkles, Crop, Move, Check, Award, Users, FileText } from 'lucide-react';
 import { Member } from '../types';
 
 interface AddMemberFormProps {
   onAddMember?: (member: Omit<Member, 'id'>) => void;
+  onAddMembers?: (members: Omit<Member, 'id'>[]) => void;
   onSaveMember?: (id: string, updated: Omit<Member, 'id' | 'selected'>) => void;
   initialMember?: Member | null;
 }
@@ -22,10 +23,12 @@ const AVATAR_PRESETS = [
   'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=150&h=150&fit=crop&crop=faces&q=80',
 ];
 
-export default function AddMemberForm({ onAddMember, onSaveMember, initialMember }: AddMemberFormProps) {
+export default function AddMemberForm({ onAddMember, onAddMembers, onSaveMember, initialMember }: AddMemberFormProps) {
+  const [inputTab, setInputTab] = useState<'detail' | 'simple'>('detail');
   const [name, setName] = useState(initialMember ? initialMember.name : '');
   const [photoUrl, setPhotoUrl] = useState(initialMember ? initialMember.photoUrl : '');
   const [role, setRole] = useState(initialMember ? (initialMember.role || '부서원') : '부서원');
+  const [bulkNames, setBulkNames] = useState('');
   const [isDragActive, setIsDragActive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -34,6 +37,7 @@ export default function AddMemberForm({ onAddMember, onSaveMember, initialMember
       setName(initialMember.name);
       setPhotoUrl(initialMember.photoUrl);
       setRole(initialMember.role || '부서원');
+      setInputTab('detail'); // Force detail mode when editing
     } else {
       setName('');
       setPhotoUrl('');
@@ -91,6 +95,42 @@ export default function AddMemberForm({ onAddMember, onSaveMember, initialMember
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (inputTab === 'simple' && !initialMember) {
+      const cleanedText = bulkNames.trim();
+      if (!cleanedText) return;
+
+      // Parse names split by commas, newlines, semicolons or dots
+      const parsedNames = cleanedText
+        .split(/[\n,;.\t]+/)
+        .map((n) => n.trim())
+        .filter((n) => n.length > 0);
+
+      if (parsedNames.length === 0) {
+        alert('올바른 형식의 이름을 입력해주세요.');
+        return;
+      }
+
+      const newBatch = parsedNames.map((n, idx) => {
+        const finalPhoto = AVATAR_PRESETS[idx % AVATAR_PRESETS.length];
+        return {
+          name: n,
+          role: role.trim() || '부서원',
+          photoUrl: finalPhoto,
+        };
+      });
+
+      if (onAddMembers) {
+        onAddMembers(newBatch);
+      } else if (onAddMember) {
+        newBatch.forEach((m) => onAddMember(m));
+      }
+
+      setBulkNames('');
+      setRole('부서원');
+      return;
+    }
+
     if (!name.trim()) return;
 
     // Use a default avatar if none chosen
@@ -241,7 +281,7 @@ export default function AddMemberForm({ onAddMember, onSaveMember, initialMember
           </div>
           <div className="flex items-center gap-3">
             <button
-              type="button"
+               type="button"
               onClick={() => setZoom((z) => Math.max(1, z - 0.1))}
               className="w-6 h-6 bg-slate-50 border border-slate-200 rounded flex items-center justify-center font-bold text-xs hover:bg-slate-100 transition-colors cursor-pointer"
             >
@@ -295,112 +335,190 @@ export default function AddMemberForm({ onAddMember, onSaveMember, initialMember
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
-      {/* Name Input */}
-      <div>
-        <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">이름 *</label>
-        <div className="relative">
-          <span className="absolute inset-y-0 left-0 flex items-center pl-2.5 text-slate-400">
-            <User className="w-3.5 h-3.5" />
-          </span>
-          <input
-            id="input-member-name"
-            type="text"
-            required
-            placeholder="홍길동"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            className="w-full pl-8 pr-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-700 placeholder-slate-400 focus:outline-none focus:border-indigo-500 focus:bg-white transition-all"
-          />
-        </div>
-      </div>
-
-      {/* Role Input */}
-      <div>
-        <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">직책 / 역할</label>
-        <div className="relative">
-          <span className="absolute inset-y-0 left-0 flex items-center pl-2.5 text-slate-400">
-            <Award className="w-3.5 h-3.5" />
-          </span>
-          <input
-            id="input-member-role"
-            type="text"
-            placeholder="부서원, 파트장, 조장 등"
-            value={role}
-            onChange={(e) => setRole(e.target.value)}
-            className="w-full pl-8 pr-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-700 placeholder-slate-400 focus:outline-none focus:border-indigo-500 focus:bg-white transition-all"
-          />
-        </div>
-      </div>
-
-      {/* Photo Upload Zone */}
-      <div>
-        <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">사진 업로드 / 프로필 선택</label>
-        <div className="grid grid-cols-1 gap-2">
-          
-          {/* Drag & Drop Upload Block */}
-          <div
-            onDragOver={onDragOver}
-            onDragLeave={onDragLeave}
-            onDrop={onDrop}
-            onClick={triggerFileSelect}
-            className={`flex flex-col items-center justify-center border-2 border-dashed rounded-lg p-2 cursor-pointer transition-all duration-300 relative overflow-hidden h-20 ${
-              isDragActive
-                ? 'border-indigo-500 bg-indigo-50/20'
-                : photoUrl
-                ? 'border-emerald-500 bg-emerald-50/5'
-                : 'border-slate-200 hover:border-slate-300 bg-slate-50/50'
+      {/* 1. Add Input Tabs if not editing an existing member */}
+      {!initialMember && (
+        <div className="flex bg-slate-100 p-1 rounded-xl text-[11px] font-bold select-none gap-1">
+          <button
+            type="button"
+            onClick={() => setInputTab('detail')}
+            className={`flex-1 py-1.5 rounded-lg flex items-center justify-center gap-1 transition-all cursor-pointer ${
+              inputTab === 'detail'
+                ? 'bg-white text-indigo-700 shadow-sm border border-indigo-100/10'
+                : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50/50'
             }`}
           >
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              onChange={onFileChange}
-              className="hidden"
-            />
+            <User className="w-3.5 h-3.5 text-indigo-505" />
+            <span>상세 등록</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setInputTab('simple')}
+            className={`flex-1 py-1.5 rounded-lg flex items-center justify-center gap-1 transition-all cursor-pointer ${
+              inputTab === 'simple'
+                ? 'bg-white text-indigo-700 shadow-sm border border-indigo-100/10'
+                : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50/50'
+            }`}
+          >
+            <Users className="w-3.5 h-3.5 text-indigo-505" />
+            <span>이름만 한 번에 추가</span>
+          </button>
+        </div>
+      )}
 
-            {photoUrl ? (
-              <div className="absolute inset-0 flex items-center justify-center group bg-slate-900/10">
-                <img
-                  src={photoUrl}
-                  alt="Preview"
-                  referrerPolicy="no-referrer"
-                  className="w-full h-full object-cover"
-                />
-                <div className="absolute inset-0 bg-slate-900/50 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
-                  <span className="text-[10px] text-white font-semibold">사진 변경</span>
-                </div>
-              </div>
-            ) : (
-              <div className="text-center">
-                <UploadCloud className="w-5 h-5 text-slate-400 mx-auto mb-1" />
-                <p className="text-[10px] text-slate-500 font-bold">PC 사진 가져오기</p>
-                <p className="text-[8px] text-slate-400 mt-0.5">또는 여기에 파일 드래그</p>
-              </div>
-            )}
+      {/* Render selected content */}
+      {inputTab === 'simple' && !initialMember ? (
+        /* SIMPLE BATCH NAME MODE */
+        <div className="space-y-4 animate-fadeIn">
+          <div>
+            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 flex items-center justify-between">
+              <span>부서원 이름 입력 (일괄) *</span>
+              <span className="text-indigo-600 text-[9px] font-semibold bg-indigo-50 px-1.5 py-0.5 rounded">간편 대량등록</span>
+            </label>
+            <div className="relative">
+              <textarea
+                id="input-member-names-area"
+                rows={4}
+                required
+                placeholder="예: 홍길동, 이순신, 강감찬, 유관순&#10;(줄바꿈이나 컴마, 점 등으로 구분하여 입력하면 한 번에 모두 추가됩니다)"
+                value={bulkNames}
+                onChange={(e) => setBulkNames(e.target.value)}
+                className="w-full text-xs text-slate-700 placeholder-slate-400 bg-slate-50 border border-slate-200 rounded-lg p-2.5 focus:outline-none focus:border-indigo-500 focus:bg-white transition-all font-sans leading-relaxed"
+              />
+            </div>
+            <p className="text-[10px] text-slate-400 leading-normal mt-1">
+              💡 입력하신 인원은 식별이 용이하고 유려하게 보이도록 <strong>서로 다른 다양한 프로필 사진 프리셋</strong>이 무작위로 자동 매칭되어 생성됩니다!
+            </p>
           </div>
 
-          {/* Presets Grid */}
-          <div className="flex items-center gap-1.5 justify-between">
-            <span className="text-[8px] font-bold text-slate-400 uppercase tracking-widest shrink-0">간편 프리셋 사진:</span>
-            <div className="flex gap-1">
-              {AVATAR_PRESETS.map((preset, idx) => (
-                <button
-                  key={idx}
-                  type="button"
-                  onClick={() => setPhotoUrl(preset)}
-                  className={`relative rounded-md overflow-hidden border transition-all p-0 h-6 w-6 shrink-0 ${
-                    photoUrl === preset ? 'border-indigo-500 scale-105' : 'border-slate-100 hover:border-slate-300'
-                  }`}
-                >
-                  <img src={preset} alt={`Prs ${idx+1}`} referrerPolicy="no-referrer" className="w-full h-full object-cover" />
-                </button>
-              ))}
+          {/* Role Input for Batch */}
+          <div>
+            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">일괄 부여할 직책 / 역할</label>
+            <div className="relative">
+              <span className="absolute inset-y-0 left-0 flex items-center pl-2.5 text-slate-400">
+                <Award className="w-3.5 h-3.5" />
+              </span>
+              <input
+                id="input-member-role-simple"
+                type="text"
+                placeholder="부서원, 파트장, 조장 등 (공란 가능)"
+                value={role}
+                onChange={(e) => setRole(e.target.value)}
+                className="w-full pl-8 pr-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-700 placeholder-slate-400 focus:outline-none focus:border-indigo-500 focus:bg-white transition-all"
+              />
+            </div>
+          </div>
+        </div>
+      ) : (
+        /* STANDARD DETAILED MODE */
+        <div className="space-y-4 animate-fadeIn">
+          {/* Name Input */}
+          <div>
+            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">이름 *</label>
+            <div className="relative">
+              <span className="absolute inset-y-0 left-0 flex items-center pl-2.5 text-slate-400">
+                <User className="w-3.5 h-3.5" />
+              </span>
+              <input
+                id="input-member-name"
+                type="text"
+                required
+                placeholder="홍길동"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                className="w-full pl-8 pr-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-700 placeholder-slate-400 focus:outline-none focus:border-indigo-500 focus:bg-white transition-all"
+              />
             </div>
           </div>
 
+          {/* Role Input */}
+          <div>
+            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">직책 / 역할</label>
+            <div className="relative">
+              <span className="absolute inset-y-0 left-0 flex items-center pl-2.5 text-slate-400">
+                <Award className="w-3.5 h-3.5" />
+              </span>
+              <input
+                id="input-member-role"
+                type="text"
+                placeholder="부서원, 파트장, 조장 등"
+                value={role}
+                onChange={(e) => setRole(e.target.value)}
+                className="w-full pl-8 pr-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-700 placeholder-slate-400 focus:outline-none focus:border-indigo-500 focus:bg-white transition-all"
+              />
+            </div>
+          </div>
+
+          {/* Photo Upload Zone */}
+          <div>
+            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">사진 업로드 / 프로필 선택</label>
+            <div className="grid grid-cols-1 gap-2">
+              
+              {/* Drag & Drop Upload Block */}
+              <div
+                onDragOver={onDragOver}
+                onDragLeave={onDragLeave}
+                onDrop={onDrop}
+                onClick={triggerFileSelect}
+                className={`flex flex-col items-center justify-center border-2 border-dashed rounded-lg p-2 cursor-pointer transition-all duration-300 relative overflow-hidden h-20 ${
+                  isDragActive
+                    ? 'border-indigo-500 bg-indigo-50/20'
+                    : photoUrl
+                    ? 'border-emerald-500 bg-emerald-50/5'
+                    : 'border-slate-200 hover:border-slate-300 bg-slate-50/50'
+                }`}
+              >
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={onFileChange}
+                  className="hidden"
+                />
+
+                {photoUrl ? (
+                  <div className="absolute inset-0 flex items-center justify-center group bg-slate-900/10">
+                    <img
+                      src={photoUrl}
+                      alt="Preview"
+                      referrerPolicy="no-referrer"
+                      className="w-full h-full object-cover"
+                    />
+                    <div className="absolute inset-0 bg-slate-900/50 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                      <span className="text-[10px] text-white font-semibold">사진 변경</span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-center">
+                    <UploadCloud className="w-5 h-5 text-slate-400 mx-auto mb-1" />
+                    <p className="text-[10px] text-slate-500 font-bold">PC 사진 가져오기</p>
+                    <p className="text-[8px] text-slate-400 mt-0.5">또는 여기에 파일 드래그</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Presets Grid */}
+              <div className="flex items-center gap-1.5 justify-between">
+                <span className="text-[8px] font-bold text-slate-400 uppercase tracking-widest shrink-0">간편 프리셋 사진:</span>
+                <div className="flex gap-1">
+                  {AVATAR_PRESETS.map((preset, idx) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => setPhotoUrl(preset)}
+                      className={`relative rounded-md overflow-hidden border transition-all p-0 h-6 w-6 shrink-0 ${
+                        photoUrl === preset ? 'border-indigo-500 scale-105' : 'border-slate-100 hover:border-slate-300'
+                      }`}
+                    >
+                      <img src={preset} alt={`Prs ${idx+1}`} referrerPolicy="no-referrer" className="w-full h-full object-cover" />
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+            </div>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Submit */}
       <button
@@ -409,7 +527,13 @@ export default function AddMemberForm({ onAddMember, onSaveMember, initialMember
         className="w-full bg-slate-800 hover:bg-slate-900 text-white font-bold py-2 px-3 rounded-lg text-xs transition-all flex items-center justify-center gap-1 cursor-pointer shadow-sm hover:shadow-md"
       >
         {initialMember ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Plus className="w-3.5 h-3.5" />}
-        <span>{initialMember ? '수정 완료하기' : '부서원 등록하기'}</span>
+        <span>
+          {initialMember
+            ? '수정 완료하기'
+            : inputTab === 'simple'
+            ? '일괄 부서원 등록하기'
+            : '부서원 등록하기'}
+        </span>
       </button>
     </form>
   );

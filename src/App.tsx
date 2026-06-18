@@ -85,6 +85,53 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number = 15000): Promise
   });
 }
 
+/**
+ * Programmatically downscales large base64 images to safe, compact dimensions (e.g. max 120x120 or 150x150, quality 0.8)
+ * to ensure database writes are incredibly fast and never hit payload or timeout limits.
+ */
+function compressBase64Image(base64Str: string, maxWidth = 120, maxHeight = 120): Promise<string> {
+  return new Promise<string>((resolve) => {
+    if (!base64Str || !base64Str.startsWith('data:image')) {
+      resolve(base64Str);
+      return;
+    }
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      let width = img.width;
+      let height = img.height;
+      if (width > maxWidth || height > maxHeight) {
+        if (width > height) {
+          height = Math.round((height * maxWidth) / width);
+          width = maxWidth;
+        } else {
+          width = Math.round((width * maxHeight) / height);
+          height = maxHeight;
+        }
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        resolve(base64Str);
+        return;
+      }
+      ctx.drawImage(img, 0, 0, width, height);
+      try {
+        const compressed = canvas.toDataURL('image/jpeg', 0.82);
+        resolve(compressed);
+      } catch (e) {
+        resolve(base64Str);
+      }
+    };
+    img.onerror = () => {
+      resolve(base64Str);
+    };
+    img.src = base64Str;
+  });
+}
+
 export default function App() {
   // Authentication States
   const [currentUser, setCurrentUser] = useState<any>(null);
@@ -156,6 +203,9 @@ export default function App() {
   // Group size controls
   const [groupCount, setGroupCount] = useState<number>(3);
   const [groups, setGroups] = useState<Group[]>([]);
+  const [groupNamingStyle, setGroupNamingStyle] = useState<string>('template_eng');
+  const [customGroupNamesStr, setCustomGroupNamesStr] = useState<string>('');
+  const [isNamingPanelExpanded, setIsNamingPanelExpanded] = useState<boolean>(false);
   const [isAddMemberModalOpen, setIsAddMemberModalOpen] = useState(false);
   const [editingMember, setEditingMember] = useState<Member | null>(null);
 
@@ -1093,6 +1143,32 @@ export default function App() {
     checkPasswordAuth(selectedDeptId, action);
   };
 
+  // Add Multiple Members at once (Requires password verification check first)
+  const handleAddMembers = async (metaList: Omit<Member, 'id'>[]) => {
+    if (!selectedDeptId) {
+      alert('등록할 부서를 먼저 신설하거나 선택하세요.');
+      return;
+    }
+    if (metaList.length === 0) return;
+
+    const action = async () => {
+      const isoNow = new Date().toISOString();
+      const newMembers: Member[] = metaList.map((meta, idx) => ({
+        ...meta,
+        id: `custom-${Date.now()}-${idx}-${Math.random().toString(36).substr(2, 9)}`,
+        departmentId: selectedDeptId,
+        selected: true,
+        createdAt: isoNow,
+        updatedAt: isoNow,
+      }));
+      setMembers((prev) => [...newMembers, ...prev]);
+      setIsAddMemberModalOpen(false);
+      updateHasUnsavedChanges(true);
+    };
+
+    checkPasswordAuth(selectedDeptId, action);
+  };
+
   // Delete Member (Requires password verification check first)
   const handleDeleteMember = async (id: string) => {
     if (!selectedDeptId) return;
@@ -1227,16 +1303,29 @@ export default function App() {
           if (Array.isArray(parsed)) {
             const isValid = parsed.every(p => typeof p === 'object' && p !== null && 'name' in p);
             if (isValid) {
-              const updatedList = parsed.map((m, idx) => ({
-                ...m,
-                id: m.id || `custom-${selectedDeptId}-${Date.now()}-${idx}-${Math.random().toString(36).substr(2, 5)}`,
-                departmentId: selectedDeptId,
-                selected: m.selected !== false,
-                role: m.role || '부서원',
-                photoUrl: m.photoUrl || 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&h=150&fit=crop&crop=faces&q=80',
-                createdAt: m.createdAt || new Date(Date.now() - idx * 1000).toISOString(),
-                updatedAt: new Date().toISOString(),
-              }));
+              // Asynchronously compress any large base64 images in imported JSON before adding them to state
+              const updatedList = await Promise.all(
+                parsed.map(async (m, idx) => {
+                  let finalPhoto = m.photoUrl || 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&h=150&fit=crop&crop=faces&q=80';
+                  if (finalPhoto.startsWith('data:image')) {
+                    try {
+                      finalPhoto = await compressBase64Image(finalPhoto, 120, 120);
+                    } catch (err) {
+                      console.warn('Image compression failed during backup restoration:', err);
+                    }
+                  }
+                  return {
+                    ...m,
+                    id: m.id || `custom-${selectedDeptId}-${Date.now()}-${idx}-${Math.random().toString(36).substr(2, 5)}`,
+                    departmentId: selectedDeptId,
+                    selected: m.selected !== false,
+                    role: m.role || '부서원',
+                    photoUrl: finalPhoto,
+                    createdAt: m.createdAt || new Date(Date.now() - idx * 1000).toISOString(),
+                    updatedAt: new Date().toISOString(),
+                  };
+                })
+              );
 
               // Record existing members of this department for server deletion
               filteredMembers.forEach((m) => {
@@ -1291,31 +1380,60 @@ export default function App() {
         // Filter local members belonging to the active selected department
         const targetMembers = members.filter(m => m.departmentId === selectedDeptId);
 
-        const batch = writeBatch(db);
+        // Gather all operations
+        const operations: { type: 'set' | 'delete'; id: string; data?: any }[] = [];
 
-        // [OPTIMIZATION] Instantly queue deletes for locally removed members - NO slow getDocs read required!
+        // 1. Queue deletes for locally removed members
         deletedMemberIdsRef.current.forEach((id) => {
-          batch.delete(doc(db, 'members', id));
+          operations.push({ type: 'delete', id });
         });
 
-        // 2. Set all current local members to Firestore batch (Atomic overwrite/insert)
+        // 2. Queue sets for all current local members (Atomic overwrite/insert)
         targetMembers.forEach((m) => {
-          const mRef = doc(db, 'members', m.id);
-          batch.set(mRef, {
-            departmentId: selectedDeptId,
-            name: m.name,
-            role: m.role || '부서원',
-            photoUrl: m.photoUrl || 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&h=150&fit=crop&crop=faces&q=80',
-            selected: m.selected !== false,
-            createdAt: m.createdAt || new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
+          operations.push({
+            type: 'set',
+            id: m.id,
+            data: {
+              departmentId: selectedDeptId,
+              name: m.name,
+              role: m.role || '부서원',
+              photoUrl: m.photoUrl || 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&h=150&fit=crop&crop=faces&q=80',
+              selected: m.selected !== false,
+              createdAt: m.createdAt || new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            },
           });
         });
 
-        // Shorten timeout to 8 seconds so the app remains highly reactive & explains exactly what steps to do
-        await withTimeout(batch.commit(), 8000);
+        if (operations.length === 0) {
+          updateHasUnsavedChanges(false);
+          setIsSavingToServer(false);
+          alert('저장할 부서원 변경사항이 없습니다.');
+          return;
+        }
 
-        // Reset unsaved changes and delete queue on successful batch commit
+        // Split operations into smaller chunks (e.g., 15 at a time) to prevent large payload network congestion & slow response timeout
+        const chunkSize = 15;
+        const totalOps = operations.length;
+        
+        for (let i = 0; i < totalOps; i += chunkSize) {
+          const chunk = operations.slice(i, i + chunkSize);
+          const batch = writeBatch(db);
+
+          chunk.forEach((op) => {
+            const mRef = doc(db, 'members', op.id);
+            if (op.type === 'delete') {
+              batch.delete(mRef);
+            } else {
+              batch.set(mRef, op.data);
+            }
+          });
+
+          // Execute write chunk with a safe, sturdy 15-second timeout per batch operation
+          await withTimeout(batch.commit(), 15000);
+        }
+
+        // Reset unsaved changes and delete queue on successful batch commits
         deletedMemberIdsRef.current = [];
         updateHasUnsavedChanges(false);
         setIsOfflineMode(false); // Restore live database sync cleanly
@@ -1415,11 +1533,38 @@ export default function App() {
 
           setTimeout(() => {
             const shuffled = shuffleArray<Member>(activeMembers);
-            const generatedGroups: Group[] = Array.from({ length: actualGroupCount }, (_, i) => ({
-              id: `g-${i + 1}`,
-              name: `TEAM ${String(i + 1).padStart(2, '0')}`,
-              members: [],
-            }));
+
+            const frNames = ['사과조', '바나나조', '딸기조', '오렌지조', '포도조', '수박조', '멜론조', '체리조', '복숭아조', '파인애플조', '레몬조', '망고조'];
+            const anNames = ['사자조', '호랑이조', '독수리조', '곰조', '여우조', '토끼조', '판다조', '돌고래조', '펭귄조', '올빼미조', '늑대조', '다람쥐조'];
+            const gmNames = ['다이아몬드조', '루비조', '사파이어조', '에메랄드조', '진주조', '자수정조', '오팔조', '토파즈조', '가넷조', '아쿠아마린조'];
+
+            const generatedGroups: Group[] = Array.from({ length: actualGroupCount }, (_, i) => {
+              let groupName = `TEAM ${String(i + 1).padStart(2, '0')}`;
+              if (groupNamingStyle === 'template_kor') {
+                groupName = `${i + 1}조`;
+              } else if (groupNamingStyle === 'theme_fruits') {
+                groupName = frNames[i % frNames.length];
+              } else if (groupNamingStyle === 'theme_animals') {
+                groupName = anNames[i % anNames.length];
+              } else if (groupNamingStyle === 'theme_gemstones') {
+                groupName = gmNames[i % gmNames.length];
+              } else if (groupNamingStyle === 'custom' && customGroupNamesStr.trim()) {
+                const customList = customGroupNamesStr
+                  .split(/[,;\n\t]+/)
+                  .map((n) => n.trim())
+                  .filter((n) => n.length > 0);
+                if (customList[i]) {
+                  groupName = customList[i];
+                } else {
+                  groupName = `${i + 1}조`;
+                }
+              }
+              return {
+                id: `g-${i + 1}`,
+                name: groupName,
+                members: [],
+              };
+            });
 
             shuffled.forEach((member, index) => {
               generatedGroups[index % actualGroupCount].members.push(member);
@@ -2550,6 +2695,117 @@ service cloud.firestore {
                 </div>
               </div>
 
+              {/* Collapsible Group Name Configuration Panel */}
+              <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden transition-all text-left">
+                <button
+                  type="button"
+                  onClick={() => setIsNamingPanelExpanded(!isNamingPanelExpanded)}
+                  className="w-full flex items-center justify-between p-3.5 px-4 text-left hover:bg-slate-50 transition-colors focus:outline-none cursor-pointer"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="p-1 px-2.5 bg-indigo-50 border border-indigo-100 rounded-lg text-[10px] font-black text-indigo-600 animate-pulse">NEW</span>
+                    <span className="text-xs font-black text-slate-800 flex items-center gap-1.5">
+                      <Sparkles className="w-4 h-4 text-indigo-505 animate-spin" style={{ animationDuration: '4s' }} />
+                      조 이름 사전 지정 및 작명 테마 설정
+                    </span>
+                  </div>
+                  <span className="text-slate-400 text-xs font-bold transition-transform duration-300" style={{ transform: isNamingPanelExpanded ? 'rotate(180deg)' : 'none' }}>
+                    ▼
+                  </span>
+                </button>
+
+                {isNamingPanelExpanded && (
+                  <div className="p-4 px-5 border-t border-slate-100 bg-slate-50/30 space-y-4">
+                    {/* Mode selector */}
+                    <div>
+                      <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 font-sans">작명 테마 방식 선택</span>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+                        {[
+                          { id: 'template_eng', label: '기본 (TEAM 01)' },
+                          { id: 'template_kor', label: '한국형 (1조, 2조)' },
+                          { id: 'theme_fruits', label: '🍏 과일 테마' },
+                          { id: 'theme_animals', label: '🐯 동물 테마' },
+                          { id: 'theme_gemstones', label: '💎 보석 테마' },
+                          { id: 'custom', label: '✍️ 직접 입력' },
+                        ].map((styleOption) => (
+                          <button
+                            key={styleOption.id}
+                            type="button"
+                            onClick={() => setGroupNamingStyle(styleOption.id)}
+                            className={`py-1.5 px-2.5 rounded-lg text-center text-[11px] font-bold border transition-all cursor-pointer ${
+                              groupNamingStyle === styleOption.id
+                                ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm font-black'
+                                : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300 hover:bg-slate-50'
+                            }`}
+                          >
+                            {styleOption.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Custom input panel */}
+                    {groupNamingStyle === 'custom' && (
+                      <div className="space-y-1.5">
+                        <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest font-sans">
+                          지정할 조 이름 목록 입력
+                        </label>
+                        <input
+                          id="input-custom-group-names"
+                          type="text"
+                          placeholder="쉼표(,)나 줄바꿈, 띄어쓰기로 구분: 예) 독수리조, 갈매기조, 제비조"
+                          value={customGroupNamesStr}
+                          onChange={(e) => setCustomGroupNamesStr(e.target.value)}
+                          className="w-full text-xs text-slate-700 bg-white border border-slate-200 rounded-lg p-2 px-3 focus:outline-none focus:border-indigo-500 shadow-3xs transition-all font-sans"
+                        />
+                        <p className="text-[10px] text-slate-400 font-semibold leading-relaxed">
+                          * 조의 개수만큼 이름을 콤마(,)나 띄어쓰기 등으로 이어서 입력해 주세요. 이름이 작성되지 않은 조에는 숫자가 자동으로 매칭됩니다.
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Dynamic Preview */}
+                    <div className="pt-2.5 border-t border-slate-100 flex flex-wrap items-center gap-2">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest shrink-0 font-sans">작명 설정 미리보기 ({groupCount}개 조):</span>
+                      <div className="flex flex-wrap gap-1.5">
+                        {Array.from({ length: groupCount }).map((_, i) => {
+                          const frNames = ['사과조', '바나나조', '딸기조', '오렌지조', '포도조', '수박조', '멜론조', '체리조', '복숭아조', '파인애플조', '레몬조', '망고조'];
+                          const anNames = ['사자조', '호랑이조', '독수리조', '곰조', '여우조', '토끼조', '판다조', '돌고래조', '펭귄조', '올빼미조', '늑대조', '다람쥐조'];
+                          const gmNames = ['다이아몬드조', '루비조', '사파이어조', '에메랄드조', '진주조', '자수정조', '오팔조', '토파즈조', '가넷조', '아쿠아마린조'];
+
+                          let previewVal = `TEAM ${String(i + 1).padStart(2, '0')}`;
+                          if (groupNamingStyle === 'template_kor') {
+                            previewVal = `${i + 1}조`;
+                          } else if (groupNamingStyle === 'theme_fruits') {
+                            previewVal = frNames[i % frNames.length];
+                          } else if (groupNamingStyle === 'theme_animals') {
+                            previewVal = anNames[i % anNames.length];
+                          } else if (groupNamingStyle === 'theme_gemstones') {
+                            previewVal = gmNames[i % gmNames.length];
+                          } else if (groupNamingStyle === 'custom' && customGroupNamesStr.trim()) {
+                            const customList = customGroupNamesStr
+                              .split(/[,;\s\n]+/)
+                              .map((n) => n.trim())
+                              .filter((n) => n.length > 0);
+                            if (customList[i]) {
+                              previewVal = customList[i];
+                            } else {
+                              previewVal = `${i + 1}조`;
+                            }
+                          }
+
+                          return (
+                            <span key={i} className="px-2.5 py-0.5 bg-indigo-50 border border-indigo-100 text-indigo-700 text-[10px] font-black rounded-lg shadow-3xs">
+                              {previewVal}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
               {/* Futuristic interactive Shuffle style selector bar */}
               <div className="bg-slate-50 border border-slate-200/90 rounded-2xl p-3 md:p-4 text-left select-none shadow-2xs">
                 <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-1.5 mb-2.5">
@@ -3302,6 +3558,9 @@ service cloud.firestore {
                 initialMember={editingMember}
                 onAddMember={(newMeta) => {
                   handleAddMember(newMeta);
+                }}
+                onAddMembers={(list) => {
+                  handleAddMembers(list);
                 }}
                 onSaveMember={(id, updated) => {
                   handleUpdateMember(id, updated);
