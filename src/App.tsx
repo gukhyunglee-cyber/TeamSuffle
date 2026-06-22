@@ -2949,13 +2949,19 @@ service cloud.firestore {
                           <div className="grid grid-cols-4 gap-3">
                             {group.members.map((member, mIdx) => (
                               <div key={member.id} className="space-y-1.5 text-center relative group">
-                                <div className="w-full aspect-square bg-slate-100 rounded-lg overflow-hidden border border-slate-100 shadow-sm relative">
-                                  <img
-                                    src={member.photoUrl}
-                                    alt={member.name}
-                                    referrerPolicy="no-referrer"
-                                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
-                                  />
+                                <div className="w-full aspect-square bg-slate-100 rounded-lg overflow-hidden border border-slate-100 shadow-sm relative flex items-center justify-center">
+                                  {member.photoUrl ? (
+                                    <img
+                                      src={member.photoUrl}
+                                      alt={member.name}
+                                      referrerPolicy="no-referrer"
+                                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
+                                    />
+                                  ) : (
+                                    <div className="w-full h-full bg-gradient-to-br from-indigo-500 to-indigo-700 text-white flex items-center justify-center font-black text-xs sm:text-sm group-hover:scale-105 transition-transform duration-200">
+                                      {member.name ? member.name.charAt(0) : '?'}
+                                    </div>
+                                  )}
                                   {mIdx === 0 && (
                                     <div className="absolute top-1 left-1 bg-amber-400 text-white p-0.5 rounded-md shadow-sm" title="대표조장">
                                       <Crown className="w-3 h-3 text-white" />
@@ -3263,12 +3269,18 @@ service cloud.firestore {
                               transition={{ duration: 0.12 }}
                               className="absolute"
                             >
-                              <img
-                                src={activeShuffleMember.photoUrl}
-                                alt={activeShuffleMember.name}
-                                referrerPolicy="no-referrer"
-                                className="w-22 h-22 rounded-full object-cover border-4 border-indigo-500 shadow-lg"
-                              />
+                              {activeShuffleMember.photoUrl ? (
+                                <img
+                                  src={activeShuffleMember.photoUrl}
+                                  alt={activeShuffleMember.name}
+                                  referrerPolicy="no-referrer"
+                                  className="w-22 h-22 rounded-full object-cover border-4 border-indigo-500 shadow-lg"
+                                />
+                              ) : (
+                                <div className="w-22 h-22 rounded-full bg-gradient-to-br from-indigo-500 to-indigo-700 text-white flex items-center justify-center font-black text-2xl border-4 border-indigo-500 shadow-lg select-none">
+                                  {activeShuffleMember.name ? activeShuffleMember.name.charAt(0) : '?'}
+                                </div>
+                              )}
                             </motion.div>
                           )}
                         </AnimatePresence>
@@ -3322,12 +3334,18 @@ service cloud.firestore {
                             transition={{ duration: 0.1 }}
                             className="relative z-10 flex flex-col items-center"
                           >
-                            <img
-                              src={activeShuffleMember.photoUrl}
-                              alt=""
-                              referrerPolicy="no-referrer"
-                              className="w-20 h-20 rounded-lg object-cover border-2 border-green-500 shadow-[0_0_15px_rgba(34,197,94,0.65)]"
-                            />
+                            {activeShuffleMember.photoUrl ? (
+                              <img
+                                src={activeShuffleMember.photoUrl}
+                                alt=""
+                                referrerPolicy="no-referrer"
+                                className="w-20 h-20 rounded-lg object-cover border-2 border-green-500 shadow-[0_0_15px_rgba(34,197,94,0.65)]"
+                              />
+                            ) : (
+                              <div className="w-20 h-20 rounded-lg bg-slate-900 text-green-400 border-2 border-green-500 shadow-[0_0_15px_rgba(34,197,94,0.65)] flex items-center justify-center font-black text-xl font-mono select-none">
+                                {activeShuffleMember.name ? activeShuffleMember.name.charAt(0) : '?'}
+                              </div>
+                            )}
                             <span className="text-xs font-black tracking-widest text-green-400 bg-slate-950/90 border border-green-500/50 px-3 py-1 rounded-md mt-3 font-mono">
                                {activeShuffleMember.name} (ID: {activeShuffleMember.id.substr(0,4)})
                             </span>
@@ -3364,7 +3382,13 @@ service cloud.firestore {
                                 >
                                   {reelList.map((m, idx) => (
                                     <div key={idx} className="flex flex-col items-center gap-1 opacity-45">
-                                      <img src={m.photoUrl} alt="" className="w-6 h-6 rounded-full border border-slate-700 object-cover" />
+                                      {m.photoUrl ? (
+                                        <img src={m.photoUrl} alt="" className="w-6 h-6 rounded-full border border-slate-700 object-cover" />
+                                      ) : (
+                                        <div className="w-6 h-6 rounded-full border border-slate-700 bg-slate-800 text-slate-300 flex items-center justify-center font-black text-[9px] select-none">
+                                          {m.name ? m.name.charAt(0) : '?'}
+                                        </div>
+                                      )}
                                       <span className="text-[7.5px] text-slate-400 truncate w-11 font-bold">{m.name}</span>
                                     </div>
                                   ))}
@@ -3378,11 +3402,17 @@ service cloud.firestore {
                                 >
                                   {displayMember && (
                                     <>
-                                      <img 
-                                        src={displayMember.photoUrl} 
-                                        alt="" 
-                                        className="w-10 h-10 rounded-full border border-amber-400 shadow-md object-cover" 
-                                      />
+                                      {displayMember.photoUrl ? (
+                                        <img 
+                                          src={displayMember.photoUrl} 
+                                          alt="" 
+                                          className="w-10 h-10 rounded-full border border-amber-400 shadow-md object-cover" 
+                                        />
+                                      ) : (
+                                        <div className="w-10 h-10 rounded-full border border-amber-400 bg-slate-800 text-amber-350 shadow-md flex items-center justify-center font-black text-xs select-none">
+                                          {displayMember.name ? displayMember.name.charAt(0) : '?'}
+                                        </div>
+                                      )}
                                       <span className="text-[10px] font-black text-amber-200 truncate w-14 block text-center">{displayMember.name}</span>
                                       <span className="text-[7px] text-slate-400 truncate w-14 block text-center font-bold">배정확정</span>
                                     </>
@@ -3415,11 +3445,17 @@ service cloud.firestore {
                                 animationDelay: `${idx * -0.15}s`
                               } as any}
                             >
-                              <img
-                                src={m.photoUrl}
-                                alt=""
-                                className="w-6 h-6 rounded-full border border-indigo-400/40 opacity-70 shadow-xs object-cover"
-                              />
+                              {m.photoUrl ? (
+                                <img
+                                  src={m.photoUrl}
+                                  alt=""
+                                  className="w-6 h-6 rounded-full border border-indigo-400/40 opacity-70 shadow-xs object-cover"
+                                />
+                              ) : (
+                                <div className="w-6 h-6 rounded-full border border-indigo-400/40 bg-indigo-900 text-white opacity-70 shadow-xs flex items-center justify-center font-black text-[9px] select-none">
+                                  {m.name ? m.name.charAt(0) : '?'}
+                                </div>
+                              )}
                             </div>
                           ))}
                         </div>
@@ -3435,11 +3471,17 @@ service cloud.firestore {
                             transition={{ duration: 0.15 }}
                             className="absolute flex flex-col items-center"
                           >
-                            <img
-                              src={activeShuffleMember.photoUrl}
-                              alt=""
-                              className="w-18 h-18 rounded-full border-2 border-indigo-400 shadow-xl object-cover"
-                            />
+                            {activeShuffleMember.photoUrl ? (
+                              <img
+                                src={activeShuffleMember.photoUrl}
+                                alt=""
+                                className="w-18 h-18 rounded-full border-2 border-indigo-400 shadow-xl object-cover"
+                              />
+                            ) : (
+                              <div className="w-18 h-18 rounded-full border-2 border-indigo-400 bg-gradient-to-br from-indigo-500 to-indigo-700 text-white shadow-xl flex items-center justify-center font-black text-xl select-none">
+                                {activeShuffleMember.name ? activeShuffleMember.name.charAt(0) : '?'}
+                              </div>
+                            )}
                             <span className="text-[11px] font-black text-indigo-200 mt-2 block bg-indigo-950/80 px-2.5 py-0.5 rounded-full border border-indigo-500/30">
                               {activeShuffleMember.name}
                             </span>
@@ -3468,7 +3510,13 @@ service cloud.firestore {
                           className="absolute left-1/2 -ml-10 w-20 h-28 bg-white text-slate-800 rounded-xl border-2 border-rose-500 shadow-xl flex flex-col justify-between p-2 z-20 overflow-hidden"
                         >
                           <span className="text-[7.5px] font-black text-rose-500 self-start">A</span>
-                          <img src={activeShuffleMember.photoUrl} alt="" className="w-10 h-10 rounded-lg object-cover mx-auto shrink-0" />
+                          {activeShuffleMember.photoUrl ? (
+                            <img src={activeShuffleMember.photoUrl} alt="" className="w-10 h-10 rounded-lg object-cover mx-auto shrink-0" />
+                          ) : (
+                            <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-indigo-500 to-indigo-700 text-white flex items-center justify-center font-black text-sm mx-auto shrink-0 select-none">
+                              {activeShuffleMember.name ? activeShuffleMember.name.charAt(0) : '?'}
+                            </div>
+                          )}
                           <span className="text-[9px] font-black text-slate-800 truncate text-center block mt-1">{activeShuffleMember.name}</span>
                           <span className="text-[7.5px] font-black text-rose-500 self-end rotate-180">A</span>
                         </motion.div>

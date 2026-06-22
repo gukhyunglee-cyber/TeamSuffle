@@ -44,18 +44,24 @@ export default function MemberItemCard({ member, onDelete, onToggleSelect, onEdi
       {/* Square profile photo with responsive viewport dimensions */}
       <div 
         onClick={() => onToggleSelect(member.id)}
-        className={`w-9 h-9 sm:w-14 sm:h-14 rounded-lg sm:rounded-xl overflow-hidden border border-slate-150 shrink-0 cursor-pointer select-none transition-all duration-300 ${
+        className={`w-9 h-9 sm:w-14 sm:h-14 rounded-lg sm:rounded-xl overflow-hidden border border-slate-150 shrink-0 cursor-pointer select-none transition-all duration-300 flex items-center justify-center ${
           isSelected 
             ? 'group-hover:scale-105 group-hover:border-indigo-200 shadow-xs' 
             : 'grayscale contrast-75'
         }`}
       >
-        <img
-          src={member.photoUrl}
-          alt={member.name}
-          referrerPolicy="no-referrer"
-          className="w-full h-full object-cover"
-        />
+        {member.photoUrl ? (
+          <img
+            src={member.photoUrl}
+            alt={member.name}
+            referrerPolicy="no-referrer"
+            className="w-full h-full object-cover"
+          />
+        ) : (
+          <div className="w-full h-full bg-gradient-to-br from-indigo-500 to-indigo-700 text-white flex items-center justify-center font-black text-xs sm:text-lg">
+            {member.name ? member.name.charAt(0) : '?'}
+          </div>
+        )}
       </div>
 
       {/* Member meta */}
