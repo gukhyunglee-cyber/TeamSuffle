@@ -2696,7 +2696,7 @@ service cloud.firestore {
               </div>
 
               {/* Collapsible Group Name Configuration Panel */}
-              <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden transition-all text-left">
+              <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden transition-all text-left shrink-0">
                 <button
                   type="button"
                   onClick={() => setIsNamingPanelExpanded(!isNamingPanelExpanded)}
@@ -2807,7 +2807,7 @@ service cloud.firestore {
               </div>
 
               {/* Futuristic interactive Shuffle style selector bar */}
-              <div className="bg-slate-50 border border-slate-200/90 rounded-2xl p-3 md:p-4 text-left select-none shadow-2xs">
+              <div className="bg-slate-50 border border-slate-200/90 rounded-2xl p-3 md:p-4 text-left select-none shadow-2xs shrink-0">
                 <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-1.5 mb-2.5">
                   <div className="flex items-center gap-1.5">
                     <Sparkles className="w-4 h-4 text-indigo-500 animate-pulse" />
