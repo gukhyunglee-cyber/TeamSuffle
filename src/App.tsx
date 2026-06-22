@@ -2297,12 +2297,12 @@ service cloud.firestore {
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: 15 }}
               transition={{ duration: 0.25 }}
-              className="absolute inset-0 flex flex-col p-4 md:p-6 lg:p-8 gap-4 overflow-y-auto"
+              className="absolute inset-0 flex flex-col p-4 md:p-8 lg:p-10 xl:p-12 gap-6 md:gap-8 overflow-y-auto max-w-[1700px] mx-auto w-full"
             >
               {/* Grid-based interactive department switcher card */}
-              <div className="w-full bg-white border border-slate-200/90 rounded-3xl p-4 sm:p-5 shadow-sm shrink-0">
+              <div className="w-full bg-white border border-slate-200/90 rounded-3xl p-5 sm:p-7 md:p-8 shadow-sm shrink-0">
                 {/* Horizontal / Grid-friendly dynamic department list with lock/unlock overlays */}
-                <div className="flex flex-wrap gap-2">
+                <div className="flex flex-wrap gap-3">
                   {/* Add Department Button integrated inside the grid */}
                   <button
                     type="button"
@@ -2312,9 +2312,9 @@ service cloud.firestore {
                       setDeptPasswordInput('');
                       setIsDeptModalOpen(true);
                     }}
-                    className="px-3.5 py-3 rounded-2xl border border-dashed border-slate-300 hover:border-indigo-400 bg-slate-50/30 hover:bg-indigo-50/20 text-slate-600 hover:text-indigo-600 transition-all cursor-pointer flex items-center justify-center gap-1.5 min-w-[140px] md:min-w-[170px] select-none text-xs font-bold"
+                    className="px-4.5 py-4 sm:px-6 sm:py-5 rounded-2xl sm:rounded-3xl border border-dashed border-slate-300 hover:border-indigo-400 bg-slate-50/30 hover:bg-indigo-50/20 text-slate-700 hover:text-indigo-600 transition-all cursor-pointer flex items-center justify-center gap-2 min-w-[160px] md:min-w-[200px] select-none text-xs sm:text-sm font-black"
                   >
-                    <Plus className="w-3.5 h-3.5 text-indigo-500" />
+                    <Plus className="w-4 h-4 text-indigo-500" />
                     <span>새 부서 추가</span>
                   </button>
 
@@ -2327,28 +2327,28 @@ service cloud.firestore {
                       <div
                         key={dept.id}
                         onClick={() => setSelectedDeptId(dept.id)}
-                        className={`px-3.5 py-3 rounded-2xl border transition-all cursor-pointer flex items-center justify-between gap-3 min-w-[140px] md:min-w-[170px] select-none hover:shadow-xs relative ${
+                        className={`px-4.5 py-4 sm:px-6 sm:py-5 rounded-2xl sm:rounded-3xl border transition-all cursor-pointer flex items-center justify-between gap-4 min-w-[160px] md:min-w-[200px] select-none hover:shadow-md relative ${
                           isActive
-                            ? 'bg-indigo-50/70 border-indigo-200 shadow-sm'
+                            ? 'bg-indigo-50/70 border-indigo-200 shadow-sm ring-2 ring-indigo-500/10'
                             : 'bg-slate-50/60 border-slate-200/80 hover:bg-slate-100/50 hover:border-slate-300'
                         }`}
                       >
-                        <div className="min-w-0 flex-1 space-y-0.5">
-                          <h4 className={`text-xs font-black truncate ${isActive ? 'text-indigo-800' : 'text-slate-700'}`}>
+                        <div className="min-w-0 flex-1 space-y-1 sm:space-y-1.5">
+                          <h4 className={`text-xs sm:text-sm md:text-base font-black truncate ${isActive ? 'text-indigo-805' : 'text-slate-750'}`}>
                             {dept.name}
                           </h4>
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-[9px] text-slate-400 font-bold">인원: {memberCount}명</span>
-                            <span className="text-slate-300 text-[9px]">•</span>
-                            <span className={`text-[9px] font-bold flex items-center gap-0.5 ${isUnlocked ? 'text-emerald-600' : 'text-slate-400'}`}>
-                              {isUnlocked ? <Unlock className="w-2.5 h-2.5" /> : <Lock className="w-2.5 h-2.5" />}
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] sm:text-xs text-slate-505 font-bold">인원: {memberCount}명</span>
+                            <span className="text-slate-300 text-[10px]">•</span>
+                            <span className={`text-[10px] sm:text-xs font-black flex items-center gap-0.5 ${isUnlocked ? 'text-emerald-600' : 'text-slate-500'}`}>
+                              {isUnlocked ? <Unlock className="w-3 h-3 text-emerald-500" /> : <Lock className="w-3 h-3 text-slate-400" />}
                               {isUnlocked ? '편집인증' : '수정잠금'}
                             </span>
                           </div>
                         </div>
 
                         {/* Inline actions inside selected department cell */}
-                        <div className="flex items-center gap-1 shrink-0">
+                        <div className="flex items-center gap-1.5 shrink-0">
                           <button
                             type="button"
                             onClick={(e) => {
@@ -2358,10 +2358,10 @@ service cloud.firestore {
                               setDeptPasswordInput(dept.password);
                               setIsDeptModalOpen(true);
                             }}
-                            className="p-1 rounded bg-white hover:bg-slate-100 border border-slate-200 text-slate-400 hover:text-indigo-600 transition-colors shadow-2xs"
+                            className="p-1.5 sm:p-2 sm:px-2.5 rounded-lg bg-white hover:bg-slate-100 border border-slate-200 text-slate-500 hover:text-indigo-600 transition-colors shadow-2xs"
                             title="부서 정보 및 권한 암호 수정"
                           >
-                            <Edit3 className="w-3 h-3" />
+                            <Edit3 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                           </button>
                           <button
                             type="button"
@@ -2369,10 +2369,10 @@ service cloud.firestore {
                               e.stopPropagation();
                               handleDeleteDepartment(dept.id);
                             }}
-                            className="p-1 rounded bg-white hover:bg-red-50 border border-slate-200 text-slate-400 hover:text-red-500 transition-colors shadow-2xs"
+                            className="p-1.5 sm:p-2 sm:px-2.5 rounded-lg bg-white hover:bg-red-50 border border-slate-200 text-slate-500 hover:text-red-500 transition-colors shadow-2xs"
                             title="이 부서 영구 삭제"
                           >
-                            <Trash2 className="w-3 h-3" />
+                            <Trash2 className="w-3.5 h-3.5 sm:w-4 sm:h-4-5" />
                           </button>
                         </div>
                       </div>
@@ -2382,31 +2382,31 @@ service cloud.firestore {
               </div>
 
               {/* Full Width Integrated List & Controls Panel */}
-              <div className="flex-1 w-full bg-white border border-slate-200 rounded-3xl shadow-sm p-6 sm:p-8 flex flex-col min-h-[400px]">
-                {/* Minimized Panel Header: 1-line layout */}
-                <div className="flex flex-row items-center justify-between gap-3 pb-3 border-b border-slate-150 shrink-0 select-none">
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <h3 className="text-xs sm:text-sm font-black text-slate-800 flex items-center gap-1.5 shrink-0 select-none">
+              <div className="flex-1 w-full bg-white border border-slate-200 rounded-3xl shadow-sm p-6 sm:p-8 md:p-10 flex flex-col min-h-[450px]">
+                {/* Panel Header */}
+                <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-4 pb-4 border-b border-slate-150 shrink-0 select-none">
+                  <div className="flex flex-wrap items-center gap-3.5 min-w-0">
+                    <h3 className="text-sm sm:text-base md:text-lg lg:text-xl font-black text-slate-800 flex items-center gap-2 shrink-0 select-none">
                       {departments.find(d => d.id === selectedDeptId)?.name || '선택된 부서'} 명단
-                      <span className="text-[10px] bg-slate-100 text-slate-500 font-bold px-1.5 py-0.5 rounded-md">
+                      <span className="text-xs bg-indigo-50 text-indigo-700 font-extrabold px-2.5 py-1 rounded-lg border border-indigo-100/50 shadow-3xs">
                         {filteredMembers.length}명
                       </span>
                       {hasUnsavedChanges && (
-                        <span className="text-[9px] sm:text-[10px] bg-amber-500 text-white font-extrabold px-1.5 py-0.5 rounded-full flex items-center gap-0.5 animate-pulse shadow-sm">
-                          <AlertTriangle className="w-2.5 h-2.5" />
-                          <span>미저장</span>
+                        <span className="text-[10px] sm:text-xs bg-amber-500 text-white font-extrabold px-2.5 py-1 rounded-full flex items-center gap-1 animate-pulse shadow-sm">
+                          <AlertTriangle className="w-3.5 h-3.5" />
+                          <span>미저장 변경사항이 있습니다</span>
                         </span>
                       )}
                     </h3>
-                    <div className="hidden sm:flex items-center gap-2 text-[10px] text-slate-400 font-semibold select-none shrink-0">
-                      <span className="text-indigo-600">참가 {filteredMembers.filter(m => m.selected !== false).length}명</span>
+                    <div className="flex flex-wrap items-center gap-2.5 text-xs sm:text-sm text-slate-500 font-bold select-none shrink-0">
+                      <span className="text-indigo-600 bg-indigo-50/50 px-2.5 py-1 rounded-lg">참가 {filteredMembers.filter(m => m.selected !== false).length}명</span>
                       <span className="text-slate-300">|</span>
-                      <span>제외 {filteredMembers.filter(m => m.selected === false).length}명</span>
+                      <span className="bg-slate-100 px-2.5 py-1 rounded-lg">제외 {filteredMembers.filter(m => m.selected === false).length}명</span>
                       <span className="text-slate-300">|</span>
                       {isDbLoading ? (
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded flex items-center gap-1.5 font-bold">
-                            <RefreshCw className="w-3 h-3 animate-spin text-amber-500" />
+                        <div className="flex items-center gap-2">
+                          <span className="text-amber-700 bg-amber-50 px-2.5 py-1 rounded-lg flex items-center gap-1.5 font-bold border border-amber-200/30">
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin text-amber-500" />
                             실시간 클라우드 연결 중...
                           </span>
                           <button
@@ -2416,16 +2416,16 @@ service cloud.firestore {
                               setIsOfflineMode(true);
                               setIsDbLoading(false);
                             }}
-                            className="bg-slate-250 hover:bg-slate-200 text-slate-705 px-1.5 py-0.5 rounded text-[9px] font-black cursor-pointer transition-colors"
+                            className="bg-slate-200 hover:bg-slate-250 text-slate-700 px-2 py-1 rounded-lg text-xs font-black cursor-pointer transition-colors"
                             title="데이터베이스 실시간 연결을 건너뛰고 브라우저 캐시 전용 오프라인 모드로 즉시 시작합니다."
                           >
                             오프라인 강제 전환
                           </button>
                         </div>
                       ) : isOfflineMode ? (
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded flex items-center gap-1.5 font-bold">
-                            <span className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-pulse"></span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-slate-700 bg-slate-100 px-2.5 py-1 rounded-lg flex items-center gap-1.5 font-bold border border-slate-200/35">
+                            <span className="w-2 h-2 bg-slate-400 rounded-full animate-pulse"></span>
                             로컬 오프라인 모드
                           </span>
                           <button
@@ -2434,15 +2434,15 @@ service cloud.firestore {
                               safeStorage.removeItem('force_offline_mode');
                               window.location.reload();
                             }}
-                            className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded text-[9px] font-black cursor-pointer transition-colors"
+                            className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-2.5 py-1 rounded-lg text-xs font-black cursor-pointer transition-colors border border-indigo-100"
                           >
                             클라우드 연결 시도
                           </button>
                         </div>
                       ) : (
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded flex items-center gap-1.5 font-bold">
-                            <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg flex items-center gap-1.5 font-bold border border-emerald-100/30">
+                            <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></span>
                             실시간 클라우드 동기화 완료
                           </span>
                           <button
@@ -2451,7 +2451,7 @@ service cloud.firestore {
                               safeStorage.setItem('force_offline_mode', 'true');
                               window.location.reload();
                             }}
-                            className="bg-slate-100 hover:bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-[9px] font-black cursor-pointer transition-colors"
+                            className="bg-slate-150 hover:bg-slate-200 text-slate-600 px-2.5 py-1 rounded-lg text-xs font-black cursor-pointer transition-colors"
                           >
                             오프라인 전환
                           </button>
@@ -2460,18 +2460,18 @@ service cloud.firestore {
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-1.5 shrink-0">
+                  <div className="flex items-center gap-2 shrink-0">
                     <button
                       type="button"
                       onClick={() => handleToggleAll(true)}
-                      className="px-2.5 py-1.5 bg-indigo-50 hover:bg-indigo-100/70 text-indigo-700 text-[10px] font-extrabold rounded-lg transition-all cursor-pointer"
+                      className="px-4.5 py-2.5 bg-indigo-50 hover:bg-indigo-100/70 text-indigo-700 text-xs sm:text-sm font-extrabold rounded-xl transition-all cursor-pointer shadow-3xs"
                     >
                       전체선택
                     </button>
                     <button
                       type="button"
                       onClick={() => handleToggleAll(false)}
-                      className="px-2.5 py-1.5 bg-slate-50 border border-slate-200 hover:bg-slate-100 text-slate-600 text-[10px] font-extrabold rounded-lg transition-all cursor-pointer"
+                      className="px-4.5 py-2.5 bg-slate-50 border border-slate-200 hover:bg-slate-100 text-slate-600 text-xs sm:text-sm font-extrabold rounded-xl transition-all cursor-pointer shadow-3xs"
                     >
                       전체해제
                     </button>
@@ -2479,10 +2479,10 @@ service cloud.firestore {
                 </div>
 
                 {/* Highly compact Roster database Grid view with maximized density */}
-                <div className="flex-1 overflow-y-auto py-2.5 minimal-scrollbar mt-1">
+                <div className="flex-1 overflow-y-auto py-4 minimal-scrollbar mt-2">
                   <AnimatePresence>
                     {filteredMembers.length > 0 ? (
-                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-2">
+                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 sm:gap-4 md:gap-5">
                         {filteredMembers.map((member) => (
                           <MemberItemCard
                             key={member.id}
@@ -2497,17 +2497,17 @@ service cloud.firestore {
                         ))}
                       </div>
                     ) : (
-                      <div className="text-center py-16 text-slate-400">
-                        <Users className="w-9 h-9 mx-auto opacity-30 mb-2 text-indigo-500" />
-                        <p className="text-xs font-bold text-slate-500">이 부서에 등록된 부서원이 없습니다.</p>
-                        <p className="text-[10px] text-slate-400 mt-1">아래의 등록 버튼을 클릭하여 소유자 비밀번호 검증 후 추가해주세요.</p>
+                      <div className="text-center py-20 text-slate-400">
+                        <Users className="w-12 h-12 mx-auto opacity-30 mb-3 text-indigo-500" />
+                        <p className="text-sm font-black text-slate-600">이 부서에 등록된 부서원이 없습니다.</p>
+                        <p className="text-xs text-slate-450 mt-1.5">아래의 등록 버튼을 클릭하여 명단을 추가해주세요.</p>
                       </div>
                     )}
                   </AnimatePresence>
                 </div>
 
                 {/* Compact Toolbar at Bottom - fitting fully on a single line with Backup & Restore supports */}
-                <div className="pt-3 border-t border-slate-100 flex flex-wrap items-center justify-center gap-2 shrink-0 select-none">
+                <div className="pt-5 mt-4 border-t border-slate-150 flex flex-wrap items-center justify-center gap-3 shrink-0 select-none">
                   {/* Hidden input for loading backup files */}
                   <input
                     id="import-backup-file"
@@ -2523,64 +2523,64 @@ service cloud.firestore {
                       setEditingMember(null);
                       setIsAddMemberModalOpen(true);
                     }}
-                    className="px-3.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white font-extrabold text-[11px] rounded-lg shadow-sm flex items-center gap-1 cursor-pointer transition-all hover:scale-[1.02]"
+                    className="px-5 py-3 bg-slate-900 hover:bg-slate-800 text-white font-extrabold text-xs sm:text-sm rounded-xl shadow-md flex items-center gap-1.5 cursor-pointer transition-all hover:scale-[1.02]"
                   >
-                    <Plus className="w-3.5 h-3.5 text-emerald-400" />
+                    <Plus className="w-4 h-4 text-emerald-405" />
                     <span>팀원 등록</span>
                   </button>
                   <button
                     onClick={handleSaveToServer}
                     disabled={isSavingToServer}
-                    className={`px-3.5 py-1.5 font-extrabold text-[11px] rounded-lg shadow-sm flex items-center gap-1 cursor-pointer relative transition-all hover:scale-[1.02] ${
+                    className={`px-5 py-3 font-extrabold text-xs sm:text-sm rounded-xl shadow-md flex items-center gap-1.5 cursor-pointer relative transition-all hover:scale-[1.02] ${
                       hasUnsavedChanges 
-                        ? 'bg-blue-600 hover:bg-blue-700 text-white animate-pulse' 
-                        : 'bg-slate-100 hover:bg-slate-200 text-slate-600 border border-slate-200'
+                        ? 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg' 
+                        : 'bg-slate-100 hover:bg-slate-200 text-slate-705 border border-slate-250'
                     }`}
                     title={hasUnsavedChanges ? "수정된 명단이 있습니다. 클릭하여 서버에 영구적으로 보관하세요!" : "현재 명단이 서버와 최신 상태에 있습니다."}
                   >
                     {isSavingToServer ? (
-                      <RefreshCw className="w-3.5 h-3.5 animate-spin text-white" />
+                      <RefreshCw className="w-4 h-4 animate-spin text-white" />
                     ) : (
-                      <Cloud className={`w-3.5 h-3.5 ${hasUnsavedChanges ? 'text-blue-100' : 'text-slate-400'}`} />
+                      <Cloud className={`w-4 h-4 ${hasUnsavedChanges ? 'text-blue-105' : 'text-slate-500'}`} />
                     )}
                     <span>{isSavingToServer ? '서버 저장 중...' : '서버에 저장'}</span>
                     {hasUnsavedChanges && (
-                      <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-rose-500 border border-white shadow-xs" />
+                      <span className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-rose-500 border-2 border-white shadow-xs animate-ping" />
                     )}
                   </button>
                   <button
                     onClick={handleResetToDefault}
-                    className="px-3 py-1.5 bg-slate-50 border border-slate-200 text-slate-600 hover:bg-slate-100 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1 transition-all cursor-pointer"
+                    className="px-4.5 py-3 bg-white border border-slate-250 text-slate-700 hover:bg-slate-55 rounded-xl text-xs sm:text-sm font-extrabold flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-3xs"
                     title="기본 데모 부서원 목록으로 되돌려 놓습니다."
                   >
-                    <RotateCcw className="w-3 h-3 text-slate-500" />
+                    <RotateCcw className="w-4 h-4 text-slate-500" />
                     <span>부서인원 리셋</span>
                   </button>
                   <button
                     onClick={handleClearAll}
-                    className="px-3 py-1.5 bg-red-50 border border-red-100 text-red-600 hover:bg-red-100/70 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1 transition-all cursor-pointer"
+                    className="px-4.5 py-3 bg-red-50 border border-red-155 text-red-650 hover:bg-red-100/70 rounded-xl text-xs sm:text-sm font-extrabold flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-3xs"
                     title="모든 인원을 비웁니다."
                   >
-                    <Trash2 className="w-3 h-3 text-red-500" />
+                    <Trash2 className="w-4 h-4 text-red-500" />
                     <span>부서원 전체비우기</span>
                   </button>
 
-                  <span className="w-px h-4 bg-slate-200 hidden sm:inline" />
+                  <span className="w-px h-6 bg-slate-250 hidden sm:inline" />
 
                   <button
                     onClick={handleExportBackup}
-                    className="px-3 py-1.5 bg-indigo-50 border border-indigo-150 text-indigo-700 hover:bg-indigo-100/50 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1 transition-all cursor-pointer"
+                    className="px-4.5 py-3 bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100/50 rounded-xl text-xs sm:text-sm font-extrabold flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-3xs"
                     title="부서원 명단을 안전하게 PC/스마트폰에 파일로 받아놓습니다."
                   >
-                    <Download className="w-3 h-3 text-indigo-600" />
+                    <Download className="w-4 h-4 text-indigo-650" />
                     <span>명단 파일백업</span>
                   </button>
                   <button
                     onClick={() => document.getElementById('import-backup-file')?.click()}
-                    className="px-3 py-1.5 bg-emerald-50 border border-emerald-150 text-emerald-850 hover:bg-emerald-100/50 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1 transition-all cursor-pointer"
+                    className="px-4.5 py-3 bg-emerald-50 border border-emerald-250 text-emerald-850 hover:bg-emerald-100/50 rounded-xl text-xs sm:text-sm font-extrabold flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-3xs"
                     title="저장되었던 다운로드 파일(.json)을 불러와 복구합니다."
                   >
-                    <Upload className="w-3 h-3 text-emerald-600" />
+                    <Upload className="w-4 h-4 text-emerald-600" />
                     <span>명단 파일인증/복구</span>
                   </button>
                 </div>

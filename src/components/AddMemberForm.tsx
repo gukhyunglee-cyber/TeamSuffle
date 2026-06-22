@@ -334,33 +334,33 @@ export default function AddMemberForm({ onAddMember, onAddMembers, onSaveMember,
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
+    <form onSubmit={handleSubmit} className="space-y-5 sm:space-y-6">
       {/* 1. Add Input Tabs if not editing an existing member */}
       {!initialMember && (
-        <div className="flex bg-slate-100 p-1 rounded-xl text-[11px] font-bold select-none gap-1">
+        <div className="flex bg-slate-100 p-1.5 rounded-2xl text-xs sm:text-sm font-bold select-none gap-2">
           <button
             type="button"
             onClick={() => setInputTab('detail')}
-            className={`flex-1 py-1.5 rounded-lg flex items-center justify-center gap-1 transition-all cursor-pointer ${
+            className={`flex-1 py-2 sm:py-3 rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer ${
               inputTab === 'detail'
                 ? 'bg-white text-indigo-700 shadow-sm border border-indigo-100/10'
                 : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50/50'
             }`}
           >
-            <User className="w-3.5 h-3.5 text-indigo-505" />
-            <span>상세 등록</span>
+            <User className="w-4 h-4 sm:w-4.5 sm:h-4.5 text-indigo-505" />
+            <span>상세 등록 창</span>
           </button>
           <button
             type="button"
             onClick={() => setInputTab('simple')}
-            className={`flex-1 py-1.5 rounded-lg flex items-center justify-center gap-1 transition-all cursor-pointer ${
+            className={`flex-1 py-2 sm:py-3 rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer ${
               inputTab === 'simple'
                 ? 'bg-white text-indigo-700 shadow-sm border border-indigo-100/10'
                 : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50/50'
             }`}
           >
-            <Users className="w-3.5 h-3.5 text-indigo-505" />
-            <span>이름만 한 번에 추가</span>
+            <Users className="w-4 h-4 sm:w-4.5 sm:h-4.5 text-indigo-505" />
+            <span>이름 일괄 등록</span>
           </button>
         </div>
       )}
@@ -368,34 +368,34 @@ export default function AddMemberForm({ onAddMember, onAddMembers, onSaveMember,
       {/* Render selected content */}
       {inputTab === 'simple' && !initialMember ? (
         /* SIMPLE BATCH NAME MODE */
-        <div className="space-y-4 animate-fadeIn">
+        <div className="space-y-5 sm:space-y-6 animate-fadeIn">
           <div>
-            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 flex items-center justify-between">
+            <label className="block text-[11px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest mb-1.5 flex items-center justify-between">
               <span>부서원 이름 입력 (일괄) *</span>
-              <span className="text-indigo-600 text-[9px] font-semibold bg-indigo-50 px-1.5 py-0.5 rounded">간편 대량등록</span>
+              <span className="text-indigo-600 text-[10px] sm:text-[11px] font-semibold bg-indigo-50 px-2 py-0.5 rounded">간편 대량등록</span>
             </label>
             <div className="relative">
               <textarea
                 id="input-member-names-area"
-                rows={4}
+                rows={5}
                 required
-                placeholder="예: 홍길동, 이순신, 강감찬, 유관순&#10;(줄바꿈이나 컴마, 점 등으로 구분하여 입력하면 한 번에 모두 추가됩니다)"
+                placeholder="예: 홍길동, 이순신, 강감찬, 유관순&#10;(줄바꿈이나 콤마, 공백 등으로 구분하여 입력하면 한 번에 모두 등록됩니다)"
                 value={bulkNames}
                 onChange={(e) => setBulkNames(e.target.value)}
-                className="w-full text-xs text-slate-700 placeholder-slate-400 bg-slate-50 border border-slate-200 rounded-lg p-2.5 focus:outline-none focus:border-indigo-500 focus:bg-white transition-all font-sans leading-relaxed"
+                className="w-full text-xs sm:text-sm text-slate-705 placeholder-slate-400 bg-slate-50 border border-slate-200 rounded-xl p-3.5 focus:outline-none focus:border-indigo-500 focus:bg-white transition-all font-sans leading-relaxed shadow-3xs"
               />
             </div>
-            <p className="text-[10px] text-slate-400 leading-normal mt-1">
+            <p className="text-[10px] sm:text-[11px] text-slate-400 leading-normal mt-1.5">
               💡 입력하신 인원은 식별이 용이하고 유려하게 보이도록 <strong>서로 다른 다양한 프로필 사진 프리셋</strong>이 무작위로 자동 매칭되어 생성됩니다!
             </p>
           </div>
 
           {/* Role Input for Batch */}
           <div>
-            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">일괄 부여할 직책 / 역할</label>
+            <label className="block text-[11px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest mb-1.5">일괄 부여할 직책 / 역할</label>
             <div className="relative">
-              <span className="absolute inset-y-0 left-0 flex items-center pl-2.5 text-slate-400">
-                <Award className="w-3.5 h-3.5" />
+              <span className="absolute inset-y-0 left-0 flex items-center pl-3.5 text-slate-400">
+                <Award className="w-4.5 h-4.5" />
               </span>
               <input
                 id="input-member-role-simple"
@@ -403,20 +403,20 @@ export default function AddMemberForm({ onAddMember, onAddMembers, onSaveMember,
                 placeholder="부서원, 파트장, 조장 등 (공란 가능)"
                 value={role}
                 onChange={(e) => setRole(e.target.value)}
-                className="w-full pl-8 pr-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-700 placeholder-slate-400 focus:outline-none focus:border-indigo-500 focus:bg-white transition-all"
+                className="w-full pl-10 pr-3.5 py-2.5 sm:py-3 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm text-slate-700 placeholder-slate-400 focus:outline-none focus:border-indigo-500 focus:bg-white transition-all shadow-3xs"
               />
             </div>
           </div>
         </div>
       ) : (
         /* STANDARD DETAILED MODE */
-        <div className="space-y-4 animate-fadeIn">
+        <div className="space-y-5 sm:space-y-6 animate-fadeIn">
           {/* Name Input */}
           <div>
-            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">이름 *</label>
+            <label className="block text-[11px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest mb-1.5">이름 *</label>
             <div className="relative">
-              <span className="absolute inset-y-0 left-0 flex items-center pl-2.5 text-slate-400">
-                <User className="w-3.5 h-3.5" />
+              <span className="absolute inset-y-0 left-0 flex items-center pl-3.5 text-slate-400">
+                <User className="w-4.5 h-4.5" />
               </span>
               <input
                 id="input-member-name"
@@ -425,17 +425,17 @@ export default function AddMemberForm({ onAddMember, onAddMembers, onSaveMember,
                 placeholder="홍길동"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                className="w-full pl-8 pr-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-700 placeholder-slate-400 focus:outline-none focus:border-indigo-500 focus:bg-white transition-all"
+                className="w-full pl-10 pr-3.5 py-2.5 sm:py-3 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm text-slate-700 placeholder-slate-400 focus:outline-none focus:border-indigo-500 focus:bg-white transition-all shadow-3xs"
               />
             </div>
           </div>
 
           {/* Role Input */}
           <div>
-            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">직책 / 역할</label>
+            <label className="block text-[11px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest mb-1.5">직책 / 역할</label>
             <div className="relative">
-              <span className="absolute inset-y-0 left-0 flex items-center pl-2.5 text-slate-400">
-                <Award className="w-3.5 h-3.5" />
+              <span className="absolute inset-y-0 left-0 flex items-center pl-3.5 text-slate-400">
+                <Award className="w-4.5 h-4.5" />
               </span>
               <input
                 id="input-member-role"
@@ -443,15 +443,15 @@ export default function AddMemberForm({ onAddMember, onAddMembers, onSaveMember,
                 placeholder="부서원, 파트장, 조장 등"
                 value={role}
                 onChange={(e) => setRole(e.target.value)}
-                className="w-full pl-8 pr-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-700 placeholder-slate-400 focus:outline-none focus:border-indigo-500 focus:bg-white transition-all"
+                className="w-full pl-10 pr-3.5 py-2.5 sm:py-3 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm text-slate-700 placeholder-slate-400 focus:outline-none focus:border-indigo-500 focus:bg-white transition-all shadow-3xs"
               />
             </div>
           </div>
 
           {/* Photo Upload Zone */}
           <div>
-            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">사진 업로드 / 프로필 선택</label>
-            <div className="grid grid-cols-1 gap-2">
+            <label className="block text-[11px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest mb-1.5">사진 업로드 / 프로필 선택</label>
+            <div className="grid grid-cols-1 gap-3.5">
               
               {/* Drag & Drop Upload Block */}
               <div
@@ -459,7 +459,7 @@ export default function AddMemberForm({ onAddMember, onAddMembers, onSaveMember,
                 onDragLeave={onDragLeave}
                 onDrop={onDrop}
                 onClick={triggerFileSelect}
-                className={`flex flex-col items-center justify-center border-2 border-dashed rounded-lg p-2 cursor-pointer transition-all duration-300 relative overflow-hidden h-20 ${
+                className={`flex flex-col items-center justify-center border-2 border-dashed rounded-xl p-3 cursor-pointer transition-all duration-300 relative overflow-hidden h-24 sm:h-28 shadow-3xs ${
                   isDragActive
                     ? 'border-indigo-500 bg-indigo-50/20'
                     : photoUrl
@@ -484,29 +484,29 @@ export default function AddMemberForm({ onAddMember, onAddMembers, onSaveMember,
                       className="w-full h-full object-cover"
                     />
                     <div className="absolute inset-0 bg-slate-900/50 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
-                      <span className="text-[10px] text-white font-semibold">사진 변경</span>
+                      <span className="text-xs text-white font-semibold">사진 변경</span>
                     </div>
                   </div>
                 ) : (
                   <div className="text-center">
-                    <UploadCloud className="w-5 h-5 text-slate-400 mx-auto mb-1" />
-                    <p className="text-[10px] text-slate-500 font-bold">PC 사진 가져오기</p>
-                    <p className="text-[8px] text-slate-400 mt-0.5">또는 여기에 파일 드래그</p>
+                    <UploadCloud className="w-6 h-6 sm:w-7 sm:h-7 text-slate-400 mx-auto mb-1.5" />
+                    <p className="text-xs text-slate-505 font-bold">PC 사진 가져오기</p>
+                    <p className="text-[10px] text-slate-400 mt-0.5">또는 여기에 파일 드래그</p>
                   </div>
                 )}
               </div>
 
               {/* Presets Grid */}
-              <div className="flex items-center gap-1.5 justify-between">
-                <span className="text-[8px] font-bold text-slate-400 uppercase tracking-widest shrink-0">간편 프리셋 사진:</span>
-                <div className="flex gap-1">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 justify-between border-t border-slate-100 pt-3">
+                <span className="text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest shrink-0">간편 추천 아바타:</span>
+                <div className="flex gap-1.5 overflow-x-auto max-w-full pb-1 py-0.5 scrollbar-thin">
                   {AVATAR_PRESETS.map((preset, idx) => (
                     <button
                       key={idx}
                       type="button"
                       onClick={() => setPhotoUrl(preset)}
-                      className={`relative rounded-md overflow-hidden border transition-all p-0 h-6 w-6 shrink-0 ${
-                        photoUrl === preset ? 'border-indigo-500 scale-105' : 'border-slate-100 hover:border-slate-300'
+                      className={`relative rounded-lg overflow-hidden border transition-all p-0 h-8 w-8 sm:h-9 sm:w-9 shrink-0 ${
+                        photoUrl === preset ? 'border-indigo-500 ring-2 ring-indigo-500/20 scale-105' : 'border-slate-150 hover:border-slate-350'
                       }`}
                     >
                       <img src={preset} alt={`Prs ${idx+1}`} referrerPolicy="no-referrer" className="w-full h-full object-cover" />
@@ -524,9 +524,9 @@ export default function AddMemberForm({ onAddMember, onAddMembers, onSaveMember,
       <button
         id="btn-add-member"
         type="submit"
-        className="w-full bg-slate-800 hover:bg-slate-900 text-white font-bold py-2 px-3 rounded-lg text-xs transition-all flex items-center justify-center gap-1 cursor-pointer shadow-sm hover:shadow-md"
+        className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold py-3 px-4 rounded-xl text-xs sm:text-sm transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-md hover:shadow-lg active:scale-98"
       >
-        {initialMember ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Plus className="w-3.5 h-3.5" />}
+        {initialMember ? <Check className="w-4 h-4 text-emerald-400" /> : <Plus className="w-4 h-4" />}
         <span>
           {initialMember
             ? '수정 완료하기'
