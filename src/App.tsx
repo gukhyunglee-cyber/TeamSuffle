@@ -199,6 +199,7 @@ export default function App() {
 
   // Navigation active steps: 1 = Member setup / 2 = Shuffling & Results / 3 = Users Management (Admin)
   const [activeStep, setActiveStep] = useState<1 | 2 | 3>(1);
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState<boolean>(false);
 
   // Group size controls
   const [groupCount, setGroupCount] = useState<number>(3);
