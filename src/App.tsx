@@ -35,7 +35,8 @@ import {
   Menu,
   X,
   Cloud,
-  Save
+  Save,
+  Gift
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Member, Group, Department, AppUser, ShuffleStyle } from './types';
@@ -204,6 +205,9 @@ export default function App() {
   // Group size controls
   const [groupCount, setGroupCount] = useState<number>(3);
   const [groups, setGroups] = useState<Group[]>([]);
+  const [drawType, setDrawType] = useState<'group' | 'lucky'>('group');
+  const [luckyDrawCount, setLuckyDrawCount] = useState<number>(1);
+  const [luckyDrawWinners, setLuckyDrawWinners] = useState<Member[]>([]);
   const [groupNamingStyle, setGroupNamingStyle] = useState<string>('template_eng');
   const [customGroupNamesStr, setCustomGroupNamesStr] = useState<string>('');
   const [isNamingPanelExpanded, setIsNamingPanelExpanded] = useState<boolean>(false);
@@ -1360,58 +1364,22 @@ export default function App() {
     checkPasswordAuth(selectedDeptId, action);
   };
 
-  // Explicit Save / Synchronize current active department roster list to Cloud Firestore server on-demand
+  // Save current active department list to Cloud Server (Firestore)
   const handleSaveToServer = async () => {
-    if (!selectedDeptId) {
-      alert('저장할 부서를 선택해 주세요.');
-      return;
-    }
+    if (!selectedDeptId) return;
 
     const action = async () => {
       setIsSavingToServer(true);
       try {
-        await authenticateApp();
-        const currentUser = auth.currentUser;
-        if (!currentUser) {
-          alert('구글 계정으로 로그인되어 있어야 서버에 안전하게 영구 저장이 가능합니다. 화면 상단의 [로그인] 버튼을 활용해 로그인해 주세요.');
-          setIsSavingToServer(false);
-          return;
-        }
-
-        // Filter local members belonging to the active selected department
-        const targetMembers = members.filter(m => m.departmentId === selectedDeptId);
-
-        // Gather all operations
         const operations: { type: 'set' | 'delete'; id: string; data?: any }[] = [];
 
-        // 1. Queue deletes for locally removed members
         deletedMemberIdsRef.current.forEach((id) => {
           operations.push({ type: 'delete', id });
         });
 
-        // 2. Queue sets for all current local members (Atomic overwrite/insert)
-        targetMembers.forEach((m) => {
-          operations.push({
-            type: 'set',
-            id: m.id,
-            data: {
-              departmentId: selectedDeptId,
-              name: m.name,
-              role: m.role || '부서원',
-              photoUrl: m.photoUrl || 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&h=150&fit=crop&crop=faces&q=80',
-              selected: m.selected !== false,
-              createdAt: m.createdAt || new Date().toISOString(),
-              updatedAt: new Date().toISOString(),
-            },
-          });
+        filteredMembers.forEach((m) => {
+          operations.push({ type: 'set', id: m.id, data: m });
         });
-
-        if (operations.length === 0) {
-          updateHasUnsavedChanges(false);
-          setIsSavingToServer(false);
-          alert('저장할 부서원 변경사항이 없습니다.');
-          return;
-        }
 
         // Split operations into smaller chunks (e.g., 15 at a time) to prevent large payload network congestion & slow response timeout
         const chunkSize = 15;
@@ -1462,19 +1430,28 @@ export default function App() {
     const activeMembers = filteredMembers.filter((m) => m.selected !== false);
 
     if (filteredMembers.length === 0) {
-      alert('조를 편성할 부서원이 없습니다. 부서원을 등록하거나 부서를 생성해주세요!');
+      alert('추첨할 부서원이 없습니다. 부서원을 등록하거나 부서를 생성해주세요!');
       return;
     }
     if (activeMembers.length === 0) {
       alert('추첨(편성)에 참여할 부서원이 선택되지 않았습니다. 명단 목록에서 사진 왼쪽 체크박스를 활성화해주세요!');
       return;
     }
-    if (groupCount < 1) {
-      alert('최소 1개 이상의 조를 입력하셔야 합니다.');
-      return;
+
+    if (drawType === 'group') {
+      if (groupCount < 1) {
+        alert('최소 1개 이상의 조를 입력하셔야 합니다.');
+        return;
+      }
+    } else {
+      if (luckyDrawCount < 1) {
+        alert('최소 1명 이상의 추첨 인원을 설정하셔야 합니다.');
+        return;
+      }
     }
 
     const actualGroupCount = Math.min(groupCount, activeMembers.length);
+    const actualLuckyCount = Math.min(luckyDrawCount, activeMembers.length);
 
     // Decide active style at run-time if RANDOM is chosen
     let activeStyleDecision = selectedShuffleStyle;
@@ -1496,9 +1473,9 @@ export default function App() {
 
     // 1. Prepare Style-specific data structures
     if (activeStyleDecision === ShuffleStyle.SLOT_MACHINE) {
-      // Build 3 separate reels with randomized members for slot machine style
+      // Build separate reels with randomized members for slot machine style
       const reels: Member[][] = [];
-      const numReels = Math.min(4, actualGroupCount || 3);
+      const numReels = Math.min(4, (drawType === 'group' ? actualGroupCount : actualLuckyCount) || 3);
       for (let i = 0; i < numReels; i++) {
         // Create a long list for infinite scroll feeling
         const reelList: Member[] = [];
@@ -1535,43 +1512,50 @@ export default function App() {
           setTimeout(() => {
             const shuffled = shuffleArray<Member>(activeMembers);
 
-            const frNames = ['사과조', '바나나조', '딸기조', '오렌지조', '포도조', '수박조', '멜론조', '체리조', '복숭아조', '파인애플조', '레몬조', '망고조'];
-            const anNames = ['사자조', '호랑이조', '독수리조', '곰조', '여우조', '토끼조', '판다조', '돌고래조', '펭귄조', '올빼미조', '늑대조', '다람쥐조'];
-            const gmNames = ['다이아몬드조', '루비조', '사파이어조', '에메랄드조', '진주조', '자수정조', '오팔조', '토파즈조', '가넷조', '아쿠아마린조'];
+            if (drawType === 'group') {
+              const frNames = ['사과조', '바나나조', '딸기조', '오렌지조', '포도조', '수박조', '멜론조', '체리조', '복숭아조', '파인애플조', '레몬조', '망고조'];
+              const anNames = ['사자조', '호랑이조', '독수리조', '곰조', '여우조', '토끼조', '판다조', '돌고래조', '펭귄조', '올빼미조', '늑대조', '다람쥐조'];
+              const gmNames = ['다이아몬드조', '루비조', '사파이어조', '에메랄드조', '진주조', '자수정조', '오팔조', '토파즈조', '가넷조', '아쿠아마린조'];
 
-            const generatedGroups: Group[] = Array.from({ length: actualGroupCount }, (_, i) => {
-              let groupName = `TEAM ${String(i + 1).padStart(2, '0')}`;
-              if (groupNamingStyle === 'template_kor') {
-                groupName = `${i + 1}조`;
-              } else if (groupNamingStyle === 'theme_fruits') {
-                groupName = frNames[i % frNames.length];
-              } else if (groupNamingStyle === 'theme_animals') {
-                groupName = anNames[i % anNames.length];
-              } else if (groupNamingStyle === 'theme_gemstones') {
-                groupName = gmNames[i % gmNames.length];
-              } else if (groupNamingStyle === 'custom' && customGroupNamesStr.trim()) {
-                const customList = customGroupNamesStr
-                  .split(/[,;\n\t]+/)
-                  .map((n) => n.trim())
-                  .filter((n) => n.length > 0);
-                if (customList[i]) {
-                  groupName = customList[i];
-                } else {
+              const generatedGroups: Group[] = Array.from({ length: actualGroupCount }, (_, i) => {
+                let groupName = `TEAM ${String(i + 1).padStart(2, '0')}`;
+                if (groupNamingStyle === 'template_kor') {
                   groupName = `${i + 1}조`;
+                } else if (groupNamingStyle === 'theme_fruits') {
+                  groupName = frNames[i % frNames.length];
+                } else if (groupNamingStyle === 'theme_animals') {
+                  groupName = anNames[i % anNames.length];
+                } else if (groupNamingStyle === 'theme_gemstones') {
+                  groupName = gmNames[i % gmNames.length];
+                } else if (groupNamingStyle === 'custom' && customGroupNamesStr.trim()) {
+                  const customList = customGroupNamesStr
+                    .split(/[,;\n\t]+/)
+                    .map((n) => n.trim())
+                    .filter((n) => n.length > 0);
+                  if (customList[i]) {
+                    groupName = customList[i];
+                  } else {
+                    groupName = `${i + 1}조`;
+                  }
                 }
-              }
-              return {
-                id: `g-${i + 1}`,
-                name: groupName,
-                members: [],
-              };
-            });
+                return {
+                  id: `g-${i + 1}`,
+                  name: groupName,
+                  members: [],
+                };
+              });
 
-            shuffled.forEach((member, index) => {
-              generatedGroups[index % actualGroupCount].members.push(member);
-            });
+              shuffled.forEach((member, index) => {
+                generatedGroups[index % actualGroupCount].members.push(member);
+              });
 
-            setGroups(generatedGroups);
+              setGroups(generatedGroups);
+            } else {
+              // Lucky Draw mode: pick the first actualLuckyCount from shuffled list
+              const winners = shuffled.slice(0, actualLuckyCount);
+              setLuckyDrawWinners(winners);
+            }
+
             setShufflePhase('completed');
 
             // Hold on completion phase for the gorgeous blast animation effect
@@ -1596,20 +1580,37 @@ export default function App() {
   };
 
   const handleCopyResults = () => {
-    if (groups.length === 0) return;
+    if (drawType === 'group') {
+      if (groups.length === 0) return;
 
-    let resultText = `📋 [조 편성 결과]\n📅 편성 시간: ${new Date().toLocaleString('ko-KR')}\n\n`;
-    groups.forEach((g) => {
-      const memberNames = g.members.map((m) => `${m.name}(${m.role || '팀원'})`).join(', ');
-      resultText += `🔸 ${g.name} (${g.members.length}명):\n   👉 ${memberNames || '배정인원 없음'}\n\n`;
-    });
-    resultText += `🎉 새로 짜인 조원들과 함께 최고의 성과를 내보세요! 🔥`;
+      let resultText = `📋 [조 편성 결과]\n📅 편성 시간: ${new Date().toLocaleString('ko-KR')}\n\n`;
+      groups.forEach((g) => {
+        const memberNames = g.members.map((m) => `${m.name}(${m.role || '팀원'})`).join(', ');
+        resultText += `🔸 ${g.name} (${g.members.length}명):\n   👉 ${memberNames || '배정인원 없음'}\n\n`;
+      });
+      resultText += `🎉 새로 짜인 조원들과 함께 최고의 성과를 내보세요! 🔥`;
 
-    copyToClipboard(resultText, () => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
+      copyToClipboard(resultText, () => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      });
+    } else {
+      if (luckyDrawWinners.length === 0) return;
+
+      let resultText = `🍀 [럭키 추첨 당첨 결과]\n📅 추첨 시간: ${new Date().toLocaleString('ko-KR')}\n\n`;
+      luckyDrawWinners.forEach((m, idx) => {
+        resultText += `🎉 당첨 ${idx + 1}순위: ${m.name}(${m.role || '팀원'})\n`;
+      });
+      resultText += `\n축하합니다! 🍀 당첨자 분들은 뜨거운 축하의 박수를 보내주세요! 🔥`;
+
+      copyToClipboard(resultText, () => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      });
+    }
   };
+
+
 
   // Render responsive Brand Header & Hamburger Menu
   const renderNavbar = () => {
@@ -2637,51 +2638,125 @@ service cloud.firestore {
 
                 {/* Control Right: Small input configuration & Instant shuffle button horizontally aligned */}
                 <div className="flex flex-wrap items-center gap-3 shrink-0 justify-end w-full md:w-auto">
-                  <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl p-1 px-3 md:p-1.5 md:px-4">
-                    <span className="text-[11px] md:text-xs font-black text-slate-700 select-none">조 개수:</span>
+                  {/* Mode selector */}
+                  <div className="flex bg-slate-100 p-0.5 rounded-xl border border-slate-200">
                     <button
                       type="button"
-                      onClick={() => setGroupCount((prev) => Math.max(1, prev - 1))}
-                      disabled={groupCount <= 1}
-                      className="w-6 h-6 md:w-7 md:h-7 bg-white hover:bg-slate-100 disabled:opacity-45 rounded-lg flex items-center justify-center font-extrabold text-xs text-slate-600 border border-slate-200 transition-all cursor-pointer shadow-sm active:scale-95 shrink-0"
+                      onClick={() => setDrawType('group')}
+                      className={`px-3 py-1 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                        drawType === 'group'
+                          ? 'bg-white text-indigo-600 shadow-sm'
+                          : 'text-slate-500 hover:text-slate-850'
+                      }`}
                     >
-                      -
+                      조 편성
                     </button>
-                    <input
-                      id="sidebar-group-input"
-                      type="number"
-                      min="1"
-                      max={Math.max(1, filteredMembers.filter(m => m.selected !== false).length)}
-                      value={groupCount}
-                      onChange={(e) => {
-                        const val = parseInt(e.target.value, 10);
-                        const activeCount = filteredMembers.filter(m => m.selected !== false).length;
-                        if (!isNaN(val)) {
-                          setGroupCount(Math.min(Math.max(1, activeCount || 1), Math.max(1, val)));
-                        } else {
-                          (e.target as any).value = '';
-                        }
-                      }}
-                      onBlur={(e) => {
-                        const val = parseInt(e.target.value, 10);
-                        const activeCount = filteredMembers.filter(m => m.selected !== false).length;
-                        if (isNaN(val) || val < 1) {
-                          setGroupCount(3);
-                        } else {
-                          setGroupCount(Math.min(Math.max(1, activeCount || 1), val));
-                        }
-                      }}
-                      className="w-10 sm:w-16 h-6 md:h-7 text-center font-black text-xs text-indigo-750 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 transition-all select-all bubble-input"
-                    />
                     <button
                       type="button"
-                      onClick={() => setGroupCount((prev) => Math.min(filteredMembers.filter(m => m.selected !== false).length, prev + 1))}
-                      disabled={groupCount >= filteredMembers.filter(m => m.selected !== false).length}
-                      className="w-6 h-6 md:w-7 md:h-7 bg-white hover:bg-slate-100 disabled:opacity-45 rounded-lg flex items-center justify-center font-extrabold text-xs text-slate-600 border border-slate-200 transition-all cursor-pointer shadow-sm active:scale-95 shrink-0"
+                      onClick={() => setDrawType('lucky')}
+                      className={`px-3 py-1 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                        drawType === 'lucky'
+                          ? 'bg-white text-indigo-600 shadow-sm'
+                          : 'text-slate-500 hover:text-slate-850'
+                      }`}
                     >
-                      +
+                      럭키 추첨
                     </button>
                   </div>
+
+                  {drawType === 'group' ? (
+                    <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl p-1 px-3 md:p-1.5 md:px-4">
+                      <span className="text-[11px] md:text-xs font-black text-slate-700 select-none">조 개수:</span>
+                      <button
+                        type="button"
+                        onClick={() => setGroupCount((prev) => Math.max(1, prev - 1))}
+                        disabled={groupCount <= 1}
+                        className="w-6 h-6 md:w-7 md:h-7 bg-white hover:bg-slate-100 disabled:opacity-45 rounded-lg flex items-center justify-center font-extrabold text-xs text-slate-600 border border-slate-200 transition-all cursor-pointer shadow-sm active:scale-95 shrink-0"
+                      >
+                        -
+                      </button>
+                      <input
+                        id="sidebar-group-input"
+                        type="number"
+                        min="1"
+                        max={Math.max(1, filteredMembers.filter(m => m.selected !== false).length)}
+                        value={groupCount}
+                        onChange={(e) => {
+                          const val = parseInt(e.target.value, 10);
+                          const activeCount = filteredMembers.filter(m => m.selected !== false).length;
+                          if (!isNaN(val)) {
+                            setGroupCount(Math.min(Math.max(1, activeCount || 1), Math.max(1, val)));
+                          } else {
+                            (e.target as any).value = '';
+                          }
+                        }}
+                        onBlur={(e) => {
+                          const val = parseInt(e.target.value, 10);
+                          const activeCount = filteredMembers.filter(m => m.selected !== false).length;
+                          if (isNaN(val) || val < 1) {
+                            setGroupCount(3);
+                          } else {
+                            setGroupCount(Math.min(Math.max(1, activeCount || 1), val));
+                          }
+                        }}
+                        className="w-10 sm:w-16 h-6 md:h-7 text-center font-black text-xs text-indigo-750 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 transition-all select-all bubble-input"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setGroupCount((prev) => Math.min(filteredMembers.filter(m => m.selected !== false).length, prev + 1))}
+                        disabled={groupCount >= filteredMembers.filter(m => m.selected !== false).length}
+                        className="w-6 h-6 md:w-7 md:h-7 bg-white hover:bg-slate-100 disabled:opacity-45 rounded-lg flex items-center justify-center font-extrabold text-xs text-slate-600 border border-slate-200 transition-all cursor-pointer shadow-sm active:scale-95 shrink-0"
+                      >
+                        +
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl p-1 px-3 md:p-1.5 md:px-4">
+                      <span className="text-[11px] md:text-xs font-black text-slate-700 select-none">추첨 인원:</span>
+                      <button
+                        type="button"
+                        onClick={() => setLuckyDrawCount((prev) => Math.max(1, prev - 1))}
+                        disabled={luckyDrawCount <= 1}
+                        className="w-6 h-6 md:w-7 md:h-7 bg-white hover:bg-slate-100 disabled:opacity-45 rounded-lg flex items-center justify-center font-extrabold text-xs text-slate-600 border border-slate-200 transition-all cursor-pointer shadow-sm active:scale-95 shrink-0"
+                      >
+                        -
+                      </button>
+                      <input
+                        id="sidebar-lucky-input"
+                        type="number"
+                        min="1"
+                        max={Math.max(1, filteredMembers.filter(m => m.selected !== false).length)}
+                        value={luckyDrawCount}
+                        onChange={(e) => {
+                          const val = parseInt(e.target.value, 10);
+                          const activeCount = filteredMembers.filter(m => m.selected !== false).length;
+                          if (!isNaN(val)) {
+                            setLuckyDrawCount(Math.min(Math.max(1, activeCount || 1), Math.max(1, val)));
+                          } else {
+                            (e.target as any).value = '';
+                          }
+                        }}
+                        onBlur={(e) => {
+                          const val = parseInt(e.target.value, 10);
+                          const activeCount = filteredMembers.filter(m => m.selected !== false).length;
+                          if (isNaN(val) || val < 1) {
+                            setLuckyDrawCount(1);
+                          } else {
+                            setLuckyDrawCount(Math.min(Math.max(1, activeCount || 1), val));
+                          }
+                        }}
+                        className="w-10 sm:w-16 h-6 md:h-7 text-center font-black text-xs text-indigo-750 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 transition-all select-all bubble-input"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setLuckyDrawCount((prev) => Math.min(filteredMembers.filter(m => m.selected !== false).length, prev + 1))}
+                        disabled={luckyDrawCount >= filteredMembers.filter(m => m.selected !== false).length}
+                        className="w-6 h-6 md:w-7 md:h-7 bg-white hover:bg-slate-100 disabled:opacity-45 rounded-lg flex items-center justify-center font-extrabold text-xs text-slate-600 border border-slate-200 transition-all cursor-pointer shadow-sm active:scale-95 shrink-0"
+                      >
+                        +
+                      </button>
+                    </div>
+                  )}
 
                   {/* Tiny shuffling button */}
                   <button
@@ -2691,7 +2766,7 @@ service cloud.firestore {
                     className="h-8.5 px-4 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white rounded-lg font-bold text-xs shadow-sm flex items-center gap-1.5 transition-all cursor-pointer hover:scale-[1.02]"
                   >
                     <Shuffle className="w-3.5 h-3.5 text-emerald-300 animate-spin" style={{ animationDuration: '6s' }} />
-                    <span>셔플 가동</span>
+                    <span>{drawType === 'group' ? '조 편성 시작' : '럭키 추첨 시작'}</span>
                   </button>
                 </div>
               </div>
@@ -2868,21 +2943,29 @@ service cloud.firestore {
                         {departments.find(d => d.id === selectedDeptId)?.name || '현 부서'}
                       </span>
                       <span className="text-slate-400 font-normal text-xs">
-                        {groups.length > 0 ? `— 총 ${groups.length}개 조 배정 완료` : '— 미편성 상태'}
+                        {drawType === 'group' ? (
+                          groups.length > 0 ? `— 총 ${groups.length}개 조 배정 완료` : '— 미편성 상태'
+                        ) : (
+                          luckyDrawWinners.length > 0 ? `— 총 ${luckyDrawWinners.length}명 당첨 완료` : '— 미추첨 상태'
+                        )}
                       </span>
                     </h3>
                   </div>
                   
-                  {groups.length > 0 && (
+                  {((drawType === 'group' && groups.length > 0) || (drawType === 'lucky' && luckyDrawWinners.length > 0)) && (
                     <div className="flex flex-wrap gap-2 shrink-0">
                       {/* Redraw button */}
                       <button
                         id="btn-reset-groups"
                         onClick={() => {
-                          setGroups([]);
+                          if (drawType === 'group') {
+                            setGroups([]);
+                          } else {
+                            setLuckyDrawWinners([]);
+                          }
                         }}
                         className="px-3 py-1.5 text-xs font-semibold text-red-600 bg-red-50 hover:bg-red-100/80 border border-red-100 rounded-lg shadow-sm transition-all flex items-center gap-1 cursor-pointer"
-                        title="조 편성 결과를 완전 초기화하고 대기 상태로 되돌립니다."
+                        title="결과를 완전 초기화하고 대기 상태로 되돌립니다."
                       >
                         <RotateCcw className="w-3 h-3 text-red-500" />
                         결과 초기화 (리셋)
@@ -2920,99 +3003,185 @@ service cloud.firestore {
                 </div>
 
                 <div className="flex-1 min-h-[350px]">
-                  {groups.length > 0 ? (
-                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                      {groups.map((group, groupIdx) => (
-                        <motion.div
-                          key={group.id}
-                          initial={{ opacity: 0, scale: 0.96, y: 12 }}
-                          animate={{ opacity: 1, scale: 1, y: 0 }}
-                          transition={{ duration: 0.35, delay: groupIdx * 0.06 }}
-                          className="bg-white rounded-3xl border border-slate-200 shadow-sm hover:shadow-md transition-all p-5 flex flex-col h-full overflow-hidden"
-                        >
-                          {/* Header bar of Team block */}
-                          <div className="flex items-center justify-between mb-4 pb-2 border-b border-slate-100">
-                            <div className="flex-1 min-w-0">
-                              <input
-                                type="text"
-                                value={group.name}
-                                onChange={(e) => handleRenameGroup(group.id, e.target.value)}
-                                className="w-full text-indigo-600 font-bold text-sm bg-transparent border-b border-transparent hover:border-slate-200 focus:border-indigo-500 focus:outline-none px-1 rounded transition-all truncate"
-                                title="더블클릭하여 조 이름 수정"
-                              />
-                            </div>
-                            <span className="px-2 py-0.5 bg-slate-100 rounded text-[10px] font-bold text-slate-500 uppercase tracking-wider shrink-0">
-                              {group.members.length} Members
-                            </span>
-                          </div>
-
-                          {/* Member pictures grid */}
-                          <div className="grid grid-cols-4 gap-3">
-                            {group.members.map((member, mIdx) => (
-                              <div key={member.id} className="space-y-1.5 text-center relative group">
-                                <div className="w-full aspect-square bg-slate-100 rounded-lg overflow-hidden border border-slate-100 shadow-sm relative flex items-center justify-center">
-                                  {member.photoUrl ? (
-                                    <img
-                                      src={member.photoUrl}
-                                      alt={member.name}
-                                      referrerPolicy="no-referrer"
-                                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
-                                    />
-                                  ) : (
-                                    <div className="w-full h-full bg-gradient-to-br from-indigo-500 to-indigo-700 text-white flex items-center justify-center font-black text-[10px] sm:text-xs px-1 text-center group-hover:scale-105 transition-transform duration-200 break-all leading-tight select-none">
-                                      {member.name || '?'}
-                                    </div>
-                                  )}
-                                  {mIdx === 0 && (
-                                    <div className="absolute top-1 left-1 bg-amber-400 text-white p-0.5 rounded-md shadow-sm" title="대표조장">
-                                      <Crown className="w-3 h-3 text-white" />
-                                    </div>
-                                  )}
-                                </div>
-                                
-                                <div className="px-0.5">
-                                  {member.photoUrl && (
-                                    <p className="text-[10px] font-bold text-slate-800 truncate leading-tight">
-                                      {member.name}
-                                    </p>
-                                  )}
-                                  <p className="text-[8px] text-slate-400 truncate leading-none mt-0.5">
-                                    {mIdx === 0 ? '대표조장 👑' : '팀원'}
-                                  </p>
-                                </div>
+                  {drawType === 'group' ? (
+                    groups.length > 0 ? (
+                      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                        {groups.map((group, groupIdx) => (
+                          <motion.div
+                            key={group.id}
+                            initial={{ opacity: 0, scale: 0.96, y: 12 }}
+                            animate={{ opacity: 1, scale: 1, y: 0 }}
+                            transition={{ duration: 0.35, delay: groupIdx * 0.06 }}
+                            className="bg-white rounded-3xl border border-slate-200 shadow-sm hover:shadow-md transition-all p-5 flex flex-col h-full overflow-hidden"
+                          >
+                            {/* Header bar of Team block */}
+                            <div className="flex items-center justify-between mb-4 pb-2 border-b border-slate-100">
+                              <div className="flex-1 min-w-0">
+                                <input
+                                  type="text"
+                                  value={group.name}
+                                  onChange={(e) => handleRenameGroup(group.id, e.target.value)}
+                                  className="w-full text-indigo-600 font-bold text-sm bg-transparent border-b border-transparent hover:border-slate-200 focus:border-indigo-500 focus:outline-none px-1 rounded transition-all truncate"
+                                  title="더블클릭하여 조 이름 수정"
+                                />
                               </div>
-                            ))}
-                          </div>
-                        </motion.div>
-                      ))}
-                    </div>
+                              <span className="px-2 py-0.5 bg-slate-100 rounded text-[10px] font-bold text-slate-500 uppercase tracking-wider shrink-0">
+                                {group.members.length} Members
+                              </span>
+                            </div>
+
+                            {/* Member pictures grid */}
+                            <div className="grid grid-cols-4 gap-3">
+                              {group.members.map((member, mIdx) => (
+                                <div key={member.id} className="space-y-1.5 text-center relative group">
+                                  <div className="w-full aspect-square bg-slate-100 rounded-lg overflow-hidden border border-slate-100 shadow-sm relative flex items-center justify-center">
+                                    {member.photoUrl ? (
+                                      <img
+                                        src={member.photoUrl}
+                                        alt={member.name}
+                                        referrerPolicy="no-referrer"
+                                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
+                                      />
+                                    ) : (
+                                      <div className="w-full h-full bg-gradient-to-br from-indigo-500 to-indigo-700 text-white flex items-center justify-center font-black text-[10px] sm:text-xs px-1 text-center group-hover:scale-105 transition-transform duration-200 break-all leading-tight select-none">
+                                        {member.name || '?'}
+                                      </div>
+                                    )}
+                                    {mIdx === 0 && (
+                                      <div className="absolute top-1 left-1 bg-amber-400 text-white p-0.5 rounded-md shadow-sm" title="대표조장">
+                                        <Crown className="w-3 h-3 text-white" />
+                                      </div>
+                                    )}
+                                  </div>
+                                  
+                                  <div className="px-0.5">
+                                    {member.photoUrl && (
+                                      <p className="text-[10px] font-bold text-slate-800 truncate leading-tight">
+                                        {member.name}
+                                      </p>
+                                    )}
+                                    <p className="text-[8px] text-slate-400 truncate leading-none mt-0.5">
+                                      {mIdx === 0 ? '대표조장 👑' : '팀원'}
+                                    </p>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </motion.div>
+                        ))}
+                      </div>
+                    ) : (
+                      /* Elegant Empty Placeholder grid */
+                      <div className="bg-white border border-slate-200 rounded-3xl p-12 text-center flex flex-col items-center justify-center min-h-[360px] h-full shadow-[inset_0_2px_4px_rgba(0,0,0,0.01)]">
+                        <div className="w-16 h-16 rounded-2xl bg-indigo-50 flex items-center justify-center text-indigo-500 mb-4 animate-float shadow-inner">
+                          <Layers className="w-7 h-7" />
+                        </div>
+                        <h3 className="text-lg font-bold text-slate-800 mb-1">편성된 조 목록이 비어있습니다</h3>
+                        <p className="text-xs text-slate-400 max-w-sm mb-6 leading-relaxed select-none">
+                          추첨 후보 인원 셋업이 끝나셨다면, 상단 제어 바에서 조 개수를 선택하시고 &lsquo;셔플 가동&rsquo;을 눌러 결과를 확인해보세요!
+                        </p>
+                        
+                        <div className="flex gap-3">
+                          <button
+                            onClick={() => setActiveStep(1)}
+                            className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition-all cursor-pointer"
+                          >
+                            ⬅ 부서원 수정하러 돌아가기
+                          </button>
+                          <button
+                            onClick={triggerShuffle}
+                            disabled={filteredMembers.filter(m => m.selected !== false).length === 0}
+                            className="px-6 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 text-white font-bold text-xs rounded-xl shadow-md cursor-pointer transition-all"
+                          >
+                            무작위 추첨 시작하기 🎲
+                          </button>
+                        </div>
+                      </div>
+                    )
                   ) : (
-                    /* Elegant Empty Placeholder grid */
-                    <div className="bg-white border border-slate-200 rounded-3xl p-12 text-center flex flex-col items-center justify-center min-h-[360px] h-full shadow-[inset_0_2px_4px_rgba(0,0,0,0.01)]">
-                      <div className="w-16 h-16 rounded-2xl bg-indigo-50 flex items-center justify-center text-indigo-500 mb-4 animate-float shadow-inner">
-                        <Layers className="w-7 h-7" />
+                    /* Lucky Draw mode result */
+                    luckyDrawWinners.length > 0 ? (
+                      <div className="flex flex-col gap-6">
+                        {/* Summary / Subtitle banner */}
+                        <div className="bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-100 rounded-3xl p-6 text-center shadow-sm relative overflow-hidden select-none">
+                          <div className="absolute top-0 right-0 w-32 h-32 bg-amber-200/20 rounded-full blur-2xl -mr-8 -mt-8" />
+                          <div className="text-amber-500 font-bold text-3xl mb-1.5 flex justify-center gap-1">🏆</div>
+                          <h4 className="text-base font-extrabold text-amber-900">당첨을 진심으로 축하합니다!</h4>
+                          <p className="text-xs text-amber-700/80 mt-1">엄격하고 공정한 럭키 무작위 셔플을 통해 최종 선발된 당첨자 명단입니다.</p>
+                        </div>
+
+                        {/* Winners Grid */}
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-6">
+                          {luckyDrawWinners.map((winner, idx) => (
+                            <motion.div
+                              key={winner.id}
+                              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+                              animate={{ opacity: 1, scale: 1, y: 0 }}
+                              transition={{ type: 'spring', stiffness: 260, damping: 20, delay: idx * 0.1 }}
+                              className="bg-white rounded-3xl border border-slate-200 shadow-sm p-5 hover:shadow-md transition-all flex flex-col items-center text-center relative group overflow-hidden"
+                            >
+                              {/* Winner Rank Badge */}
+                              <div className="absolute top-2.5 left-2.5 bg-gradient-to-r from-amber-400 to-amber-500 text-white font-black text-[10px] px-2.5 py-1 rounded-full shadow-sm">
+                                당첨 {idx + 1}순위
+                              </div>
+
+                              <div className="w-24 h-24 bg-slate-100 rounded-2xl overflow-hidden border-2 border-amber-300 shadow-md relative flex items-center justify-center mt-4 mb-3 shrink-0">
+                                {winner.photoUrl ? (
+                                  <img
+                                    src={winner.photoUrl}
+                                    alt={winner.name}
+                                    referrerPolicy="no-referrer"
+                                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
+                                  />
+                                ) : (
+                                  <div className="w-full h-full bg-gradient-to-br from-amber-400 to-orange-500 text-white flex items-center justify-center font-black text-sm px-2 text-center group-hover:scale-105 transition-transform duration-200 break-all leading-tight select-none">
+                                    {winner.name || '?'}
+                                  </div>
+                                )}
+                              </div>
+
+                              <div className="w-full">
+                                {winner.photoUrl && (
+                                  <h5 className="font-extrabold text-slate-800 text-sm truncate">
+                                    {winner.name}
+                                  </h5>
+                                )}
+                                <p className="text-[10px] text-slate-400 font-bold mt-1 uppercase tracking-wide">
+                                  {winner.role || '팀원'}
+                                </p>
+                              </div>
+                            </motion.div>
+                          ))}
+                        </div>
                       </div>
-                      <h3 className="text-lg font-bold text-slate-800 mb-1">편성된 조 목록이 비어있습니다</h3>
-                      <p className="text-xs text-slate-400 max-w-sm mb-6 leading-relaxed select-none">
-                        추첨 후보 인원 셋업이 끝나셨다면, 상단 제어 바에서 조 개수를 선택하시고 &lsquo;셔플 가동&rsquo;을 눌러 결과를 확인해보세요!
-                      </p>
-                      
-                      <div className="flex gap-3">
-                        <button
-                          onClick={() => setActiveStep(1)}
-                          className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition-all cursor-pointer"
-                        >
-                          ⬅ 부서원 수정하러 돌아가기
-                        </button>
-                        <button
-                          onClick={triggerShuffle}
-                          disabled={filteredMembers.filter(m => m.selected !== false).length === 0}
-                          className="px-6 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 text-white font-bold text-xs rounded-xl shadow-md cursor-pointer transition-all"
-                        >
-                          무작위 추첨 시작하기 🎲
-                        </button>
+                    ) : (
+                      /* Elegant Empty Placeholder grid for Lucky Draw */
+                      <div className="bg-white border border-slate-200 rounded-3xl p-12 text-center flex flex-col items-center justify-center min-h-[360px] h-full shadow-[inset_0_2px_4px_rgba(0,0,0,0.01)]">
+                        <div className="w-16 h-16 rounded-2xl bg-amber-50 flex items-center justify-center text-amber-500 mb-4 animate-float shadow-inner">
+                          <Gift className="w-7 h-7" />
+                        </div>
+                        <h3 className="text-lg font-bold text-slate-800 mb-1">선택된 럭키 당첨자가 없습니다</h3>
+                        <p className="text-xs text-slate-400 max-w-sm mb-6 leading-relaxed select-none">
+                          추첨 후보 인원 셋업이 끝나셨다면, 상단 제어 바에서 럭키 추첨 모드를 선택하시고 &lsquo;셔플 가동&rsquo;을 눌러 행운의 당첨자를 확인해보세요!
+                        </p>
+                        
+                        <div className="flex gap-3">
+                          <button
+                            onClick={() => setActiveStep(1)}
+                            className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition-all cursor-pointer"
+                          >
+                            ⬅ 부서원 수정하러 돌아가기
+                          </button>
+                          <button
+                            onClick={triggerShuffle}
+                            disabled={filteredMembers.filter(m => m.selected !== false).length === 0}
+                            className="px-6 py-2 bg-amber-500 hover:bg-amber-600 disabled:bg-slate-200 text-white font-bold text-xs rounded-xl shadow-md cursor-pointer transition-all"
+                          >
+                            럭키 무작위 추첨 시작하기 🍀
+                          </button>
+                        </div>
                       </div>
-                    </div>
+                    )
                   )}
                 </div>
               </div>
