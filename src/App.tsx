@@ -248,6 +248,8 @@ export default function App() {
   const [copied, setCopied] = useState(false);
   const [capturing, setCapturing] = useState(false);
   const [captured, setCaptured] = useState(false);
+  const [isCaptureModalOpen, setIsCaptureModalOpen] = useState(false);
+  const [capturedImage, setCapturedImage] = useState<string | null>(null);
   const [rulesCopied, setRulesCopied] = useState(false);
 
   // Robust clipboard copy supporting standard and sandboxed environments (iframes/mobile)
@@ -1623,14 +1625,17 @@ export default function App() {
 
       const canvas = await html2canvas(targetElement, {
         useCORS: true,
-        allowTaint: true,
-        backgroundColor: '#ffffff',
+        allowTaint: false,
+        backgroundColor: '#f8fafc', // match slate-50/40 background
         scale: 2,
         logging: false,
       });
 
-      // 1. Convert to Image Data URL & Download the file
+      // 1. Convert to Image Data URL
       const dataUrl = canvas.toDataURL('image/png');
+      setCapturedImage(dataUrl);
+
+      // 2. Download the file automatically
       const link = document.createElement('a');
       const timestamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
       const title = drawType === 'group' ? '조편성결과' : '럭키추첨결과';
@@ -1640,7 +1645,10 @@ export default function App() {
       link.click();
       document.body.removeChild(link);
 
-      // 2. Write the PNG image directly to the system clipboard for instant pasting
+      // 3. Open interactive capture helper modal
+      setIsCaptureModalOpen(true);
+
+      // 4. Try to write the PNG image directly to the clipboard (may be blocked by iframe sandboxing)
       if (navigator.clipboard && window.ClipboardItem) {
         try {
           canvas.toBlob(async (blob) => {
@@ -1649,22 +1657,21 @@ export default function App() {
                 const item = new ClipboardItem({ [blob.type]: blob });
                 await navigator.clipboard.write([item]);
                 console.log('Successfully copied image to clipboard!');
+                setCaptured(true);
+                setTimeout(() => setCaptured(false), 3000);
               } catch (clipErr) {
-                console.warn('Clipboard write failed, might be restricted by browser security policies:', clipErr);
+                console.warn('Clipboard write failed due to browser/iframe restriction:', clipErr);
               }
             }
           }, 'image/png');
         } catch (blobErr) {
           console.warn('Failed to convert canvas to blob:', blobErr);
         }
-      } else {
-        console.warn('Clipboard API or ClipboardItem is not supported in this browser context.');
       }
 
-      setCaptured(true);
-      setTimeout(() => setCaptured(false), 3000);
     } catch (error) {
       console.error('Failed to capture results:', error);
+      alert('이미지 캡쳐 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.');
     } finally {
       setCapturing(false);
     }
@@ -4148,6 +4155,103 @@ service cloud.firestore {
                 <button
                   onClick={() => setIsInstallGuideOpen(false)}
                   className="px-4 py-1.5 bg-slate-900 text-white rounded-xl text-xs hover:bg-slate-800 transition-colors cursor-pointer"
+                >
+                  확인 완료
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+      
+      {/* 6. CAPTURE RESULT MODAL POPUP */}
+      <AnimatePresence>
+        {isCaptureModalOpen && capturedImage && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-slate-950/80 backdrop-blur-xs z-50 flex items-center justify-center p-4 overflow-y-auto"
+            onClick={() => setIsCaptureModalOpen(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, y: 15, opacity: 0 }}
+              animate={{ scale: 1, y: 0, opacity: 1 }}
+              exit={{ scale: 0.95, y: 15, opacity: 0 }}
+              transition={{ type: 'spring', duration: 0.4 }}
+              className="bg-white border border-slate-200 rounded-3xl p-6 shadow-2xl w-full max-w-xl relative z-10 my-8"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between mb-4 pb-2 border-b border-slate-150">
+                <span className="text-sm font-extrabold text-slate-800 tracking-tight flex items-center gap-1.5 select-none">
+                  <Camera className="w-4 h-4 text-indigo-600" />
+                  결과화면 캡쳐 완료 📸
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setIsCaptureModalOpen(false)}
+                  className="w-6 h-6 hover:bg-slate-100 rounded-md flex items-center justify-center text-xs text-slate-400 hover:text-slate-600 transition-colors cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Alert / Instruction Banner */}
+              <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 mb-4 text-xs select-none">
+                <p className="font-extrabold text-amber-900 mb-1 flex items-center gap-1">
+                  💡 클립보드 복사 & 메신저 붙여넣기 방법안내
+                </p>
+                <p className="text-amber-800 leading-relaxed font-medium">
+                  일부 브라우저 보안 및 아이프레임(iframe) 환경에서는 스크립트를 통한 이미지 강제 복사가 제한될 수 있습니다.
+                  <span className="block mt-1.5 text-indigo-750 font-bold">
+                    [가장 확실하고 쉬운 해결법]:
+                  </span>
+                  아래 결과 이미지를 <strong className="text-slate-900 underline font-black">마우스 우클릭</strong>한 뒤 <strong className="text-indigo-600 font-extrabold">&lsquo;이미지 복사&rsquo;</strong>를 클릭하세요!
+                  그 후 슬랙, 카카오톡, 잔디, 메일 등에 <strong className="text-slate-900">Ctrl + V (붙여넣기)</strong> 하시면 즉시 전송이 가능합니다. (모바일은 이미지를 길게 누르기)
+                </p>
+              </div>
+
+              {/* Image Preview Area */}
+              <div className="space-y-2">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block select-none">
+                  결과 이미지 미리보기 (마우스 우클릭 후 복사 가능)
+                </span>
+                <div className="border border-slate-200 rounded-2xl p-2.5 bg-slate-50 flex justify-center max-h-[300px] overflow-y-auto shadow-inner group relative">
+                  <img
+                    src={capturedImage}
+                    alt="Captured shuffle results"
+                    className="max-w-full h-auto object-contain rounded-lg border border-slate-100 shadow-sm hover:scale-[1.01] transition-transform duration-200 cursor-pointer"
+                    title="마우스 우클릭하여 '이미지 복사' 또는 '다른 이름으로 저장'을 선택할 수 있습니다."
+                  />
+                  <div className="absolute bottom-2 right-2 bg-slate-900/70 text-white text-[9px] px-2 py-0.5 rounded-full select-none opacity-0 group-hover:opacity-100 transition-opacity">
+                    우클릭 복사 가능 🖱️
+                  </div>
+                </div>
+              </div>
+
+              {/* Footer buttons */}
+              <div className="mt-5 pt-4 border-t border-slate-100 flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const link = document.createElement('a');
+                    const timestamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
+                    const title = drawType === 'group' ? '조편성결과' : '럭키추첨결과';
+                    link.href = capturedImage;
+                    link.download = `${title}_${timestamp}.png`;
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                  }}
+                  className="px-4 py-2 bg-slate-100 text-slate-700 font-bold text-xs rounded-xl hover:bg-slate-200 border border-slate-200 transition-colors cursor-pointer flex items-center gap-1.5"
+                >
+                  📥 파일로 다시 다운로드
+                </button>
+                
+                <button
+                  type="button"
+                  onClick={() => setIsCaptureModalOpen(false)}
+                  className="px-6 py-2 bg-indigo-600 text-white font-extrabold text-xs rounded-xl hover:bg-indigo-750 shadow-sm transition-all cursor-pointer"
                 >
                   확인 완료
                 </button>
