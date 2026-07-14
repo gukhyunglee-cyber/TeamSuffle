@@ -1623,7 +1623,9 @@ export default function App() {
     try {
       setCapturing(true);
 
-      const canvas = await html2canvas(targetElement, {
+      // Robustly resolve html2canvas default or named import
+      const html2canvasFn = (html2canvas as any).default || html2canvas;
+      const canvas = await html2canvasFn(targetElement, {
         useCORS: true,
         allowTaint: false,
         backgroundColor: '#f8fafc', // match slate-50/40 background
@@ -1648,13 +1650,14 @@ export default function App() {
       // 3. Open interactive capture helper modal
       setIsCaptureModalOpen(true);
 
-      // 4. Try to write the PNG image directly to the clipboard (may be blocked by iframe sandboxing)
-      if (navigator.clipboard && window.ClipboardItem) {
+      // 4. Try to write the PNG image directly to the clipboard safely (immune to ReferenceError)
+      if (typeof window !== 'undefined' && navigator.clipboard && (window as any).ClipboardItem) {
         try {
           canvas.toBlob(async (blob) => {
             if (blob) {
               try {
-                const item = new ClipboardItem({ [blob.type]: blob });
+                const ClipboardItemConstructor = (window as any).ClipboardItem;
+                const item = new ClipboardItemConstructor({ [blob.type]: blob });
                 await navigator.clipboard.write([item]);
                 console.log('Successfully copied image to clipboard!');
                 setCaptured(true);
@@ -3132,6 +3135,7 @@ service cloud.firestore {
                                       <img
                                         src={member.photoUrl}
                                         alt={member.name}
+                                        crossOrigin="anonymous"
                                         referrerPolicy="no-referrer"
                                         className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
                                       />
@@ -3223,6 +3227,7 @@ service cloud.firestore {
                                   <img
                                     src={winner.photoUrl}
                                     alt={winner.name}
+                                    crossOrigin="anonymous"
                                     referrerPolicy="no-referrer"
                                     className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
                                   />
