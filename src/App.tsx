@@ -1629,6 +1629,7 @@ export default function App() {
         logging: false,
       });
 
+      // 1. Convert to Image Data URL & Download the file
       const dataUrl = canvas.toDataURL('image/png');
       const link = document.createElement('a');
       const timestamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
@@ -1639,8 +1640,29 @@ export default function App() {
       link.click();
       document.body.removeChild(link);
 
+      // 2. Write the PNG image directly to the system clipboard for instant pasting
+      if (navigator.clipboard && window.ClipboardItem) {
+        try {
+          canvas.toBlob(async (blob) => {
+            if (blob) {
+              try {
+                const item = new ClipboardItem({ [blob.type]: blob });
+                await navigator.clipboard.write([item]);
+                console.log('Successfully copied image to clipboard!');
+              } catch (clipErr) {
+                console.warn('Clipboard write failed, might be restricted by browser security policies:', clipErr);
+              }
+            }
+          }, 'image/png');
+        } catch (blobErr) {
+          console.warn('Failed to convert canvas to blob:', blobErr);
+        }
+      } else {
+        console.warn('Clipboard API or ClipboardItem is not supported in this browser context.');
+      }
+
       setCaptured(true);
-      setTimeout(() => setCaptured(false), 2000);
+      setTimeout(() => setCaptured(false), 3000);
     } catch (error) {
       console.error('Failed to capture results:', error);
     } finally {
@@ -3043,22 +3065,22 @@ service cloud.firestore {
                         onClick={handleCaptureResults}
                         disabled={capturing}
                         className="px-3 py-1.5 text-xs font-semibold text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 disabled:opacity-50 shadow-sm transition-all focus:outline-none flex items-center gap-1 cursor-pointer"
-                        title="결과 영역 전체를 이미지 파일(.png)로 저장합니다."
+                        title="결과 영역 전체를 이미지 파일(.png)로 저장하고 클립보드에 복사하여 붙여넣기(Ctrl+V)할 수 있게 합니다."
                       >
                         {capturing ? (
                           <>
                             <div className="w-3.5 h-3.5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin shrink-0" />
-                            <span>캡쳐 중...</span>
+                            <span>캡쳐 및 복사 중...</span>
                           </>
                         ) : captured ? (
                           <>
                             <Check className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-                            <span>캡쳐 완료!</span>
+                            <span>캡쳐 & 클립보드 복사 완료!</span>
                           </>
                         ) : (
                           <>
                             <Camera className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
-                            <span>결과화면 캡쳐</span>
+                            <span>결과화면 캡쳐 (클립보드 복사)</span>
                           </>
                         )}
                       </button>
