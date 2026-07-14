@@ -36,8 +36,10 @@ import {
   X,
   Cloud,
   Save,
-  Gift
+  Gift,
+  Camera
 } from 'lucide-react';
+import html2canvas from 'html2canvas';
 import { motion, AnimatePresence } from 'motion/react';
 import { Member, Group, Department, AppUser, ShuffleStyle } from './types';
 import { DEFAULT_MEMBERS } from './data/defaultMembers';
@@ -244,6 +246,8 @@ export default function App() {
   const [slotMachineReels, setSlotMachineReels] = useState<Member[][]>([]);
   const [vortexMiniMembers, setVortexMiniMembers] = useState<Member[]>([]);
   const [copied, setCopied] = useState(false);
+  const [capturing, setCapturing] = useState(false);
+  const [captured, setCaptured] = useState(false);
   const [rulesCopied, setRulesCopied] = useState(false);
 
   // Robust clipboard copy supporting standard and sandboxed environments (iframes/mobile)
@@ -1607,6 +1611,40 @@ export default function App() {
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
       });
+    }
+  };
+
+  const handleCaptureResults = async () => {
+    const targetElement = document.getElementById('shuffle-results-capture-area');
+    if (!targetElement) return;
+
+    try {
+      setCapturing(true);
+
+      const canvas = await html2canvas(targetElement, {
+        useCORS: true,
+        allowTaint: true,
+        backgroundColor: '#ffffff',
+        scale: 2,
+        logging: false,
+      });
+
+      const dataUrl = canvas.toDataURL('image/png');
+      const link = document.createElement('a');
+      const timestamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
+      const title = drawType === 'group' ? '조편성결과' : '럭키추첨결과';
+      link.href = dataUrl;
+      link.download = `${title}_${timestamp}.png`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+
+      setCaptured(true);
+      setTimeout(() => setCaptured(false), 2000);
+    } catch (error) {
+      console.error('Failed to capture results:', error);
+    } finally {
+      setCapturing(false);
     }
   };
 
@@ -2998,11 +3036,37 @@ service cloud.firestore {
                           </>
                         )}
                       </button>
+
+                      <button
+                        id="btn-capture-results"
+                        type="button"
+                        onClick={handleCaptureResults}
+                        disabled={capturing}
+                        className="px-3 py-1.5 text-xs font-semibold text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 disabled:opacity-50 shadow-sm transition-all focus:outline-none flex items-center gap-1 cursor-pointer"
+                        title="결과 영역 전체를 이미지 파일(.png)로 저장합니다."
+                      >
+                        {capturing ? (
+                          <>
+                            <div className="w-3.5 h-3.5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin shrink-0" />
+                            <span>캡쳐 중...</span>
+                          </>
+                        ) : captured ? (
+                          <>
+                            <Check className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                            <span>캡쳐 완료!</span>
+                          </>
+                        ) : (
+                          <>
+                            <Camera className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+                            <span>결과화면 캡쳐</span>
+                          </>
+                        )}
+                      </button>
                     </div>
                   )}
                 </div>
 
-                <div className="flex-1 min-h-[350px]">
+                <div id="shuffle-results-capture-area" className="flex-1 min-h-[350px] bg-slate-50/40 p-5 rounded-3xl border border-slate-200/60 shadow-[inset_0_2px_4px_rgba(0,0,0,0.015)]">
                   {drawType === 'group' ? (
                     groups.length > 0 ? (
                       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
