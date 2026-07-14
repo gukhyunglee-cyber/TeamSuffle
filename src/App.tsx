@@ -1616,6 +1616,57 @@ export default function App() {
     }
   };
 
+  // Helper to convert external photo URLs safely to Base64 to prevent canvas tainting (CORS)
+  const convertUrlToBase64 = async (url: string): Promise<string | null> => {
+    try {
+      // Try fetching via CORS blob
+      const response = await fetch(url, { mode: 'cors' });
+      const blob = await response.blob();
+      return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          resolve(reader.result as string);
+        };
+        reader.onerror = () => resolve(null);
+        reader.readAsDataURL(blob);
+      });
+    } catch (error) {
+      console.warn(`Failed to fetch and convert image to base64 via CORS: ${url}`, error);
+      // Fallback: draw onto standard image element with anonymous crossOrigin
+      return new Promise((resolve) => {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => {
+          try {
+            const canvas = document.createElement('canvas');
+            canvas.width = img.width;
+            canvas.height = img.height;
+            const ctx = canvas.getContext('2d');
+            if (ctx) {
+              ctx.drawImage(img, 0, 0);
+              resolve(canvas.toDataURL('image/png'));
+              return;
+            }
+          } catch (e) {
+            console.warn(`Failed to convert image to base64 via canvas drawing: ${url}`, e);
+          }
+          resolve(null);
+        };
+        img.onerror = () => {
+          resolve(null);
+        };
+        img.src = url;
+      });
+    }
+  };
+
+  const convertUrlToBase64WithTimeout = async (url: string, timeoutMs = 1500): Promise<string | null> => {
+    return Promise.race([
+      convertUrlToBase64(url),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), timeoutMs))
+    ]);
+  };
+
   const handleCaptureResults = async () => {
     const targetElement = document.getElementById('shuffle-results-capture-area');
     if (!targetElement) return;
@@ -1623,7 +1674,31 @@ export default function App() {
     try {
       setCapturing(true);
 
-      // Robustly resolve html2canvas default or named import
+      // 1. Gather all external image URLs inside the results view
+      const urlsToConvert = new Set<string>();
+      if (drawType === 'group') {
+        groups.forEach(g => {
+          g.members.forEach(m => {
+            if (m.photoUrl) urlsToConvert.add(m.photoUrl);
+          });
+        });
+      } else {
+        luckyDrawWinners.forEach(w => {
+          if (w.photoUrl) urlsToConvert.add(w.photoUrl);
+        });
+      }
+
+      // 2. Pre-convert all images to base64 synchronously (with a per-image timeout) to absolutely ensure NO CORS taint
+      const convertedPhotos: Record<string, string> = {};
+      const conversionPromises = Array.from(urlsToConvert).map(async (url) => {
+        const base64 = await convertUrlToBase64WithTimeout(url, 2000);
+        if (base64) {
+          convertedPhotos[url] = base64;
+        }
+      });
+      await Promise.all(conversionPromises);
+
+      // 3. Render html2canvas with custom cloned element sanitization
       const html2canvasFn = (html2canvas as any).default || html2canvas;
       const canvas = await html2canvasFn(targetElement, {
         useCORS: true,
@@ -1631,13 +1706,37 @@ export default function App() {
         backgroundColor: '#f8fafc', // match slate-50/40 background
         scale: 2,
         logging: false,
+        onclone: (clonedDoc) => {
+          const clonedArea = clonedDoc.getElementById('shuffle-results-capture-area');
+          if (clonedArea) {
+            const images = clonedArea.querySelectorAll('img');
+            images.forEach((imgElement) => {
+              const src = imgElement.src;
+              if (src && !src.startsWith('data:')) {
+                // Find a match in our pre-converted base64 cache
+                const matchedKey = Object.keys(convertedPhotos).find(key => 
+                  key === src || src.endsWith(key) || key.endsWith(src)
+                );
+                const base64 = matchedKey ? convertedPhotos[matchedKey] : null;
+                if (base64) {
+                  imgElement.src = base64;
+                } else {
+                  // If we don't have a safe base64 representation of this image, it will taint the canvas!
+                  // To guarantee 100% security against SecurityError, we completely remove this img element.
+                  // The beautiful initials fallback layer rendered directly underneath will be visible instead!
+                  imgElement.remove();
+                }
+              }
+            });
+          }
+        }
       });
 
-      // 1. Convert to Image Data URL
+      // 4. Convert to Image Data URL
       const dataUrl = canvas.toDataURL('image/png');
       setCapturedImage(dataUrl);
 
-      // 2. Download the file automatically
+      // 5. Download the file automatically
       const link = document.createElement('a');
       const timestamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
       const title = drawType === 'group' ? '조편성결과' : '럭키추첨결과';
@@ -1647,10 +1746,10 @@ export default function App() {
       link.click();
       document.body.removeChild(link);
 
-      // 3. Open interactive capture helper modal
+      // 6. Open interactive capture helper modal
       setIsCaptureModalOpen(true);
 
-      // 4. Try to write the PNG image directly to the clipboard safely (immune to ReferenceError)
+      // 7. Try to write the PNG image directly to the clipboard safely
       if (typeof window !== 'undefined' && navigator.clipboard && (window as any).ClipboardItem) {
         try {
           canvas.toBlob(async (blob) => {
@@ -3131,18 +3230,18 @@ service cloud.firestore {
                               {group.members.map((member, mIdx) => (
                                 <div key={member.id} className="space-y-1.5 text-center relative group">
                                   <div className="w-full aspect-square bg-slate-100 rounded-lg overflow-hidden border border-slate-100 shadow-sm relative flex items-center justify-center">
-                                    {member.photoUrl ? (
+                                    {/* Initials Background Fallback Layer */}
+                                    <div className="absolute inset-0 bg-gradient-to-br from-indigo-500 to-indigo-700 text-white flex items-center justify-center font-black text-[10px] sm:text-xs px-1 text-center group-hover:scale-105 transition-transform duration-200 break-all leading-tight select-none">
+                                      {member.name || '?'}
+                                    </div>
+                                    {member.photoUrl && (
                                       <img
                                         src={member.photoUrl}
                                         alt={member.name}
                                         crossOrigin="anonymous"
                                         referrerPolicy="no-referrer"
-                                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
+                                        className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
                                       />
-                                    ) : (
-                                      <div className="w-full h-full bg-gradient-to-br from-indigo-500 to-indigo-700 text-white flex items-center justify-center font-black text-[10px] sm:text-xs px-1 text-center group-hover:scale-105 transition-transform duration-200 break-all leading-tight select-none">
-                                        {member.name || '?'}
-                                      </div>
                                     )}
                                     {mIdx === 0 && (
                                       <div className="absolute top-1 left-1 bg-amber-400 text-white p-0.5 rounded-md shadow-sm" title="대표조장">
@@ -3223,18 +3322,18 @@ service cloud.firestore {
                               </div>
 
                               <div className="w-24 h-24 bg-slate-100 rounded-2xl overflow-hidden border-2 border-amber-300 shadow-md relative flex items-center justify-center mt-4 mb-3 shrink-0">
-                                {winner.photoUrl ? (
+                                {/* Initials Background Fallback Layer */}
+                                <div className="absolute inset-0 bg-gradient-to-br from-amber-400 to-orange-500 text-white flex items-center justify-center font-black text-sm px-2 text-center group-hover:scale-105 transition-transform duration-200 break-all leading-tight select-none">
+                                  {winner.name || '?'}
+                                </div>
+                                {winner.photoUrl && (
                                   <img
                                     src={winner.photoUrl}
                                     alt={winner.name}
                                     crossOrigin="anonymous"
                                     referrerPolicy="no-referrer"
-                                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
+                                    className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
                                   />
-                                ) : (
-                                  <div className="w-full h-full bg-gradient-to-br from-amber-400 to-orange-500 text-white flex items-center justify-center font-black text-sm px-2 text-center group-hover:scale-105 transition-transform duration-200 break-all leading-tight select-none">
-                                    {winner.name || '?'}
-                                  </div>
                                 )}
                               </div>
 
